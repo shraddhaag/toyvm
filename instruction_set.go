@@ -99,3 +99,17 @@ func jump(instr uint16) {
 	var baseRegister uint16 = (instr >> 6) & 0x7
 	registers[PC] = registers[baseRegister]
 }
+
+func jumpRegister(instr uint16) {
+	registers[R7] = registers[PC]
+
+	var bit11 uint16 = (instr >> 11) & 0x1
+
+	if bit11 == 0 {
+		// JSRR: Jump to Subroutine Register
+		registers[PC] = registers[(instr>>6)&0x7]
+	} else {
+		// JSR: Jump to Subroutine
+		registers[PC] += signExtend(instr&0x7FF, 11)
+	}
+}
