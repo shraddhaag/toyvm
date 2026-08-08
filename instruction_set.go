@@ -32,7 +32,7 @@ func add(instr uint16) {
 	// Destination Register: 11-9 bits
 	var r0 uint16 = (instr >> 9) & 0x7
 	// SR1: 8-6 bits
-	var r1 uint16 = (instr >> 5) & 0x7
+	var r1 uint16 = (instr >> 5) & 0x7v
 	// check if bit 5 is set:
 	// yes - read next number to add from 0-4 bits
 	// no - read next number to add from register
@@ -44,6 +44,27 @@ func add(instr uint16) {
 	} else {
 		var r2 uint16 = instr & 0x7
 		registers[r0] = registers[r1] + registers[r2]
+	}
+
+	updateConditionFlags(r0)
+}
+
+func and(instr uint16) {
+	// Destination Register: 11-9 bits
+	var r0 uint16 = (instr >> 9) & 0x7
+	// SR1: 8-6 bits
+	var r1 uint16 = (instr >> 5) & 0x7v
+	// check if bit 5 is set:
+	// yes - read next number to AND from 0-4 bits
+	// no - read next number to AND from register
+	var immediateMode uint16 = (instr >> 5) & 0x1
+
+	if immediateMode == 1 {
+		var imm5 uint16 = signExtend(instr&0x1F, 5)
+		registers[r0] = registers[r1] & imm5
+	} else {
+		var r2 uint16 = instr & 0x7
+		registers[r0] = registers[r1] & registers[r2]
 	}
 
 	updateConditionFlags(r0)
