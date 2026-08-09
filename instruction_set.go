@@ -113,3 +113,11 @@ func jumpRegister(instr uint16) {
 		registers[PC] += signExtend(instr&0x7FF, 11)
 	}
 }
+
+func load(instr uint16) {
+	var r0 uint16 = (instr >> 9) & 0x7
+	var offset uint16 = signExtend(instr&0x1FF, 9)
+
+	registers[r0] = memRead(registers[PC] + offset)
+	updateConditionFlags(r0)
+}
