@@ -156,3 +156,22 @@ func not(instr uint16) {
 	registers[r0] = ^registers[r1]
 	updateConditionFlags(r0)
 }
+
+func store(instr uint16) {
+	var r0 uint16 = (instr >> 9) & 0x7
+	var offset uint16 = signExtend(instr&0x1FF, 9)
+	memWrite(registers[PC]+offset, registers[r0])
+}
+
+func storeIndirect(instr uint16) {
+	var r0 uint16 = (instr >> 9) & 0x7
+	var offset uint16 = signExtend(instr&0x1FF, 9)
+	memWrite(memRead(registers[PC]+offset), registers[r0])
+}
+
+func storeRegister(instr uint16) {
+	var r0 uint16 = (instr >> 9) & 0x7
+	var r1 uint16 = (instr >> 6) & 0x7
+	var offset uint16 = signExtend(instr&0x3F, 6)
+	memWrite(registers[r1]+offset, registers[r0])
+}
