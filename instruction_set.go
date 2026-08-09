@@ -121,3 +121,13 @@ func load(instr uint16) {
 	registers[r0] = memRead(registers[PC] + offset)
 	updateConditionFlags(r0)
 }
+
+// loadIndirect is used when we need to load far away memory
+// mem to lead = value at memory (PC + pffset)
+func loadIndirect(instr uint16) {
+	var r0 uint16 = (instr >> 9) & 0x7
+	var offset uint16 = signExtend(instr&0x1FF, 9)
+
+	registers[r0] = memRead(memRead(registers[PC] + offset))
+	updateConditionFlags(r0)
+}
