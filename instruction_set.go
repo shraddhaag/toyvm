@@ -1,5 +1,11 @@
 package main
 
+import (
+	"bufio"
+	"fmt"
+	"os"
+)
+
 type OpCode int
 
 const (
@@ -20,6 +26,57 @@ const (
 	LEA                // load effective address
 	TRAP               // execute trap
 )
+
+type TrapCode int
+
+const (
+	TrapGetC  TrapCode = 0x20
+	TrapOut            = 0x21
+	TrapPutS           = 0x22
+	TrapIn             = 0x23
+	TrapPutSP          = 0x24
+	TrapHalt           = 0x25
+)
+
+func handleTrapInstructions(instr uint16) {
+	registers[R7] = registers[PC]
+
+	switch TrapCode(instr & 0xFF) {
+
+	case TrapGetC:
+		reader := bufio.NewReader(os.Stdin)
+		inputChar, _, _ := reader.ReadRune()
+		registers[R0] = uint16(inputChar)
+		updateConditionFlags(uint16(R0))
+
+	case TrapOut:
+		fmt.Println(rune(registers[R0]))
+
+	case TrapPutS:
+		addr := registers[R0]
+		for memRead(addr) != 0x0000 {
+			fmt.Print(rune(memRead(addr)))
+			addr++
+		}
+	case TrapIn:
+		fmt.Printf("Enter a character: ")
+		reader := bufio.NewReader(os.Stdin)
+		inputChar, _, _ := reader.ReadRune()
+		fmt.Printf(string(inputChar))
+		registers[R0] = uint16(inputChar)
+		updateConditionFlags(uint16(R0))
+	case TrapPutSP:
+		addr := registers[R0]
+		for memRead(addr) != 0x0000 {
+			memoryContents := memRead(addr)
+			fmt.Print(memoryContents&0xFF, memoryContents>>8)
+			addr++
+		}
+	case TrapHalt:
+		fmt.Println("Halt Program!")
+		// running = false
+	}
+}
 
 func signExtend(x uint16, bitCount int) uint16 {
 	if ((x >> (bitCount - 1)) & 1) == 1 {
