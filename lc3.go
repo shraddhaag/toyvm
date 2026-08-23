@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -94,8 +96,11 @@ func signExtend(x uint16, bitCount int) uint16 {
 }
 
 func main() {
-	// Load Arguments
-	// Setup
+	err := parseArgs()
+	if err != nil {
+		fmt.Println("encountered an error: ", err)
+		os.Exit(1)
+	}
 
 	// since exactly one condition flag should be set at any given time,
 	// set the Z flag
@@ -239,4 +244,49 @@ func main() {
 		default:
 		}
 	}
+}
+
+func parseArgs() error {
+	if len(os.Args) < 2 {
+		fmt.Println("lc3 [image-file] ...")
+		return fmt.Errorf("too few arguments")
+	}
+
+	for _, path := range os.Args[1:] {
+		err := readImage(path)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readImage(filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// read origin first
+	var origin uint16
+	err = binary.Read(file, binary.BigEndian, origin)
+	if err != nil {
+		return err
+	}
+
+	var val uint16
+	addr := origin
+	for {
+		err = binary.Read(file, binary.BigEndian, val)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+
+		memory[addr] = val
+		addr++
+	}
+	return nil
 }
