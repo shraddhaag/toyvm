@@ -76,7 +76,7 @@ func updateConditionFlags(result uint16) {
 	} else if (registers[result] >> 15) == 1 {
 		registers[COND] = NEG
 	} else {
-		registers[result] = uint16(POS)
+		registers[COND] = uint16(POS)
 	}
 }
 
@@ -276,7 +276,7 @@ func main() {
 				slog.Debug("processing Trap PUTS instruction")
 				addr := registers[R0]
 				for memRead(addr) != 0 {
-					fmt.Print(rune(memRead(addr)))
+					fmt.Printf("%c", rune(memRead(addr)))
 					addr++
 				}
 			case TrapIn:
