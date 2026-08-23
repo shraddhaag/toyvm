@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"atomicgo.dev/keyboard"
+	"atomicgo.dev/keyboard/keys"
 )
 
 type OpCode int
@@ -78,6 +81,27 @@ func updateConditionFlags(result uint16) {
 
 const MemoryMax uint32 = 1 << 16
 
+const (
+	MmapKBSR = 0xFE00
+	MmapKBDR = 0xFE02
+)
+
+func getInputFromKeyBoard() uint16 {
+	var keyPresssed uint16
+	keyboard.Listen(func(key keys.Key) (stop bool, err error) {
+		switch key.Code {
+		case keys.CtrlC, keys.Esc:
+			fmt.Println("halting")
+			os.Exit(1)
+		default:
+			keyPresssed = uint16(key.Code)
+			return true, nil
+		}
+		return true, nil
+	})
+	return keyPresssed
+}
+
 var memory = make([]uint16, MemoryMax)
 
 func memWrite(address uint16, val uint16) {
@@ -85,6 +109,15 @@ func memWrite(address uint16, val uint16) {
 }
 
 func memRead(address uint16) uint16 {
+	if address == MmapKBSR {
+		key := getInputFromKeyBoard()
+		if key != 0 {
+			memWrite(MmapKBSR, 1<<15)
+			memWrite(MmapKBDR, key)
+		} else {
+			memWrite(MmapKBSR, 0)
+		}
+	}
 	return memory[address]
 }
 
@@ -101,7 +134,7 @@ func main() {
 		fmt.Println("encountered an error: ", err)
 		os.Exit(1)
 	}
-
+	fmt.Println("images are loaded")
 	// since exactly one condition flag should be set at any given time,
 	// set the Z flag
 	registers[COND] = ZRO
@@ -118,7 +151,7 @@ func main() {
 		instr := memRead(registers[PC])
 		registers[PC]++
 		op := OpCode(instr >> 12)
-
+		fmt.Println("processing instruction: ", instr)
 		switch op {
 		case OpAdd:
 			r0 := (instr >> 9) & 0x7
@@ -270,15 +303,17 @@ func readImage(filePath string) error {
 
 	// read origin first
 	var origin uint16
-	err = binary.Read(file, binary.BigEndian, origin)
+	err = binary.Read(file, binary.BigEndian, &origin)
 	if err != nil {
 		return err
 	}
 
+	fmt.Println("origin addr is: ", origin)
+
 	var val uint16
 	addr := origin
 	for {
-		err = binary.Read(file, binary.BigEndian, val)
+		err = binary.Read(file, binary.BigEndian, &val)
 		if err == io.EOF {
 			break
 		} else if err != nil {
