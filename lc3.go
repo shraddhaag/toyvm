@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"atomicgo.dev/keyboard"
@@ -91,7 +92,7 @@ func getInputFromKeyBoard() uint16 {
 	keyboard.Listen(func(key keys.Key) (stop bool, err error) {
 		switch key.Code {
 		case keys.CtrlC, keys.Esc:
-			fmt.Println("halting")
+			slog.Info("halting")
 			os.Exit(1)
 		default:
 			keyPresssed = uint16(key.Code)
@@ -129,12 +130,19 @@ func signExtend(x uint16, bitCount int) uint16 {
 }
 
 func main() {
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+	slog.SetDefault(slog.New(handler))
+
 	err := parseArgs()
 	if err != nil {
-		fmt.Println("encountered an error: ", err)
-		os.Exit(1)
+		slog.Error("encountered an error in parsing arguments", slog.Any("error", err))
+		return
 	}
-	fmt.Println("images are loaded")
+
+	slog.Info("setup done")
+
 	// since exactly one condition flag should be set at any given time,
 	// set the Z flag
 	registers[COND] = ZRO
@@ -151,9 +159,10 @@ func main() {
 		instr := memRead(registers[PC])
 		registers[PC]++
 		op := OpCode(instr >> 12)
-		fmt.Println("processing instruction: ", instr)
+		slog.Debug("start processing instruction", "instruction", instr)
 		switch op {
 		case OpAdd:
+			slog.Debug("processing ADD instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 5) & 0x7
 			immediateMode := (instr >> 5) & 0x1
@@ -166,6 +175,7 @@ func main() {
 			}
 			updateConditionFlags(r0)
 		case OpAnd:
+			slog.Debug("processing AND instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 5) & 0x7
 			immediateMode := (instr >> 5) & 0x1
@@ -178,11 +188,13 @@ func main() {
 			}
 			updateConditionFlags(r0)
 		case OpNot:
+			slog.Debug("processing NOT instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			registers[r0] = ^registers[r1]
 			updateConditionFlags(r0)
 		case OpBr:
+			slog.Debug("processing BR instruction")
 			n := (instr >> 11) & 0x1
 			z := (instr >> 10) & 0x1
 			p := (instr >> 9) & 0x1
@@ -192,9 +204,11 @@ func main() {
 				registers[PC] += offset
 			}
 		case OpJmp:
+			slog.Debug("processing JMP instruction")
 			baseRegister := (instr >> 6) & 0x7
 			registers[PC] = registers[baseRegister]
 		case OpJsr:
+			slog.Debug("processing JSR instruction")
 			registers[R7] = registers[PC]
 			bit11 := (instr >> 11) & 0x1
 			if bit11 == 0 {
@@ -205,56 +219,68 @@ func main() {
 				registers[PC] += signExtend(instr&0x7FF, 11)
 			}
 		case OpLd:
+			slog.Debug("processing LD instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			registers[r0] = memRead(registers[PC] + offset)
 			updateConditionFlags(r0)
 		case OpLdi:
+			slog.Debug("processing LDI instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			registers[r0] = memRead(memRead(registers[PC] + offset))
 			updateConditionFlags(r0)
 		case OpLdr:
+			slog.Debug("processing LDR instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			offset := signExtend(instr&0x3F, 5)
 			registers[r0] = memRead(registers[r1] + offset)
 			updateConditionFlags(r0)
 		case OpLea:
+			slog.Debug("processing LEA instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			registers[r0] = registers[PC] + offset
 			updateConditionFlags(r0)
 		case OpSt:
+			slog.Debug("processing ST instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			memWrite(registers[PC]+offset, registers[r0])
 		case OpSti:
+			slog.Debug("processing STI instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			memWrite(memRead(registers[PC]+offset), registers[r0])
 		case OpStr:
+			slog.Debug("processing STR instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			offset := signExtend(instr&0x3F, 6)
 			memWrite(registers[r1]+offset, registers[r0])
 		case OpTrap:
+			slog.Debug("processing Trap instruction")
 			registers[R7] = registers[PC]
 			switch TrapCode(instr & 0xFF) {
 			case TrapGetC:
+				slog.Debug("processing Trap GETC instruction")
 				reader := bufio.NewReader(os.Stdin)
 				inputChar, _, _ := reader.ReadRune()
 				registers[R0] = uint16(inputChar)
 				updateConditionFlags(uint16(R0))
 			case TrapOut:
+				slog.Debug("processing Trap OUT instruction")
 				fmt.Println(rune(registers[R0]))
 			case TrapPutS:
+				slog.Debug("processing Trap PUTS instruction")
 				addr := registers[R0]
-				for memRead(addr) != 0x0000 {
+				for memRead(addr) != 0 {
 					fmt.Print(rune(memRead(addr)))
 					addr++
 				}
 			case TrapIn:
+				slog.Debug("processing Trap IN instruction")
 				fmt.Printf("Enter a character: ")
 				reader := bufio.NewReader(os.Stdin)
 				inputChar, _, _ := reader.ReadRune()
@@ -262,6 +288,7 @@ func main() {
 				registers[R0] = uint16(inputChar)
 				updateConditionFlags(uint16(R0))
 			case TrapPutSP:
+				slog.Debug("processing Trap PUTSP instruction")
 				addr := registers[R0]
 				for memRead(addr) != 0x0000 {
 					memoryContents := memRead(addr)
@@ -269,7 +296,8 @@ func main() {
 					addr++
 				}
 			case TrapHalt:
-				fmt.Println("Halt Program!")
+				slog.Debug("processing Trap HALT instruction")
+				slog.Info("Halt Program!")
 				running = false
 			}
 		case OpRes:
@@ -308,7 +336,7 @@ func readImage(filePath string) error {
 		return err
 	}
 
-	fmt.Println("origin addr is: ", origin)
+	slog.Info("origin addr is read", "origin", fmt.Sprintf("%#x", origin))
 
 	var val uint16
 	addr := origin
