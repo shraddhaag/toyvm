@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -69,8 +68,6 @@ func main() {
 		Executing: Running,
 	}
 
-	registers := vm.Registers
-
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
@@ -86,163 +83,52 @@ func main() {
 
 	// since exactly one condition flag should be set at any given time,
 	// set the Z flag
-	registers[RCond] = CondZro
+	vm.Registers[RCond] = CondZro
 
 	// set the PC to starting position
 	// 0x3000 is the default
 	var PcStart uint16 = 0x3000
-	registers[PC] = PcStart
+	vm.Registers[PC] = PcStart
 
-	running := true
-
-	for running {
+	for vm.Executing == Running {
 		// fetch instruction and operation
-		instr := memRead(vm.Memory, registers[PC])
-		registers[PC]++
+		instr := memRead(vm.Memory, vm.Registers[PC])
+		vm.Registers[PC]++
 		op := instr >> 12
 		slog.Debug("start processing instruction", "instruction", instr)
 		switch op {
 		case OpAdd:
-			slog.Debug("processing ADD instruction")
-			r0 := (instr >> 9) & 0x7
-			r1 := (instr >> 5) & 0x7
-			immediateMode := (instr >> 5) & 0x1
-			if immediateMode == 1 {
-				imm5 := signExtend(instr&0x1F, 5)
-				registers[r0] = registers[r1] + imm5
-			} else {
-				r2 := instr & 0x7
-				registers[r0] = registers[r1] + registers[r2]
-			}
-			updateConditionFlags(registers, r0)
+			vm.add(instr)
 		case OpAnd:
-			slog.Debug("processing AND instruction")
-			r0 := (instr >> 9) & 0x7
-			r1 := (instr >> 5) & 0x7
-			immediateMode := (instr >> 5) & 0x1
-			if immediateMode == 1 {
-				imm5 := signExtend(instr&0x1F, 5)
-				registers[r0] = registers[r1] & imm5
-			} else {
-				r2 := instr & 0x7
-				registers[r0] = registers[r1] & registers[r2]
-			}
-			updateConditionFlags(registers, r0)
+			vm.and(instr)
 		case OpNot:
-			slog.Debug("processing NOT instruction")
-			r0 := (instr >> 9) & 0x7
-			r1 := (instr >> 6) & 0x7
-			registers[r0] = ^registers[r1]
-			updateConditionFlags(registers, r0)
+			vm.not(instr)
 		case OpBr:
-			slog.Debug("processing BR instruction")
-			n := (instr >> 11) & 0x1
-			z := (instr >> 10) & 0x1
-			p := (instr >> 9) & 0x1
-			offset := signExtend(instr&0x1FF, 9)
-			if (n == 1 && registers[RCond] == CondNeg) || (z == 1 && registers[RCond] == CondZro) ||
-				(p == 1 && registers[RCond] == CondPos) {
-				registers[PC] += offset
-			}
+			vm.br(instr)
 		case OpJmp:
-			slog.Debug("processing JMP instruction")
-			baseRegister := (instr >> 6) & 0x7
-			registers[PC] = registers[baseRegister]
+			vm.jmp(instr)
 		case OpJsr:
-			slog.Debug("processing JSR instruction")
-			registers[R7] = registers[PC]
-			bit11 := (instr >> 11) & 0x1
-			if bit11 == 0 {
-				// JSRR: Jump to Subroutine Register
-				registers[PC] = registers[(instr>>6)&0x7]
-			} else {
-				// JSR: Jump to Subroutine
-				registers[PC] += signExtend(instr&0x7FF, 11)
-			}
+			vm.jsr(instr)
 		case OpLd:
-			slog.Debug("processing LD instruction")
-			r0 := (instr >> 9) & 0x7
-			offset := signExtend(instr&0x1FF, 9)
-			registers[r0] = memRead(vm.Memory, registers[PC]+offset)
-			updateConditionFlags(registers, r0)
+			vm.ld(instr)
 		case OpLdi:
-			slog.Debug("processing LDI instruction")
-			r0 := (instr >> 9) & 0x7
-			offset := signExtend(instr&0x1FF, 9)
-			registers[r0] = memRead(vm.Memory, memRead(vm.Memory, registers[PC]+offset))
-			updateConditionFlags(registers, r0)
+			vm.ldi(instr)
 		case OpLdr:
-			slog.Debug("processing LDR instruction")
-			r0 := (instr >> 9) & 0x7
-			r1 := (instr >> 6) & 0x7
-			offset := signExtend(instr&0x3F, 5)
-			registers[r0] = memRead(vm.Memory, registers[r1]+offset)
-			updateConditionFlags(registers, r0)
+			vm.ldr(instr)
 		case OpLea:
-			slog.Debug("processing LEA instruction")
-			r0 := (instr >> 9) & 0x7
-			offset := signExtend(instr&0x1FF, 9)
-			registers[r0] = registers[PC] + offset
-			updateConditionFlags(registers, r0)
+			vm.lea(instr)
 		case OpSt:
-			slog.Debug("processing ST instruction")
-			r0 := (instr >> 9) & 0x7
-			offset := signExtend(instr&0x1FF, 9)
-			memWrite(vm.Memory, registers[PC]+offset, registers[r0])
+			vm.st(instr)
 		case OpSti:
-			slog.Debug("processing STI instruction")
-			r0 := (instr >> 9) & 0x7
-			offset := signExtend(instr&0x1FF, 9)
-			memWrite(vm.Memory, memRead(vm.Memory, registers[PC]+offset), registers[r0])
+			vm.sti(instr)
 		case OpStr:
-			slog.Debug("processing STR instruction")
-			r0 := (instr >> 9) & 0x7
-			r1 := (instr >> 6) & 0x7
-			offset := signExtend(instr&0x3F, 6)
-			memWrite(vm.Memory, registers[r1]+offset, registers[r0])
+			vm.str(instr)
 		case OpTrap:
-			slog.Debug("processing Trap instruction")
-			registers[R7] = registers[PC]
-			switch instr & 0xFF {
-			case TrapGetC:
-				slog.Debug("processing Trap GETC instruction")
-				reader := bufio.NewReader(os.Stdin)
-				inputChar, _, _ := reader.ReadRune()
-				registers[R0] = uint16(inputChar)
-				updateConditionFlags(vm.Memory, uint16(R0))
-			case TrapOut:
-				slog.Debug("processing Trap OUT instruction")
-				fmt.Println(rune(registers[R0]))
-			case TrapPutS:
-				slog.Debug("processing Trap PUTS instruction")
-				addr := registers[R0]
-				for memRead(vm.Memory, addr) != 0 {
-					fmt.Printf("%c", rune(memRead(vm.Memory, addr)))
-					addr++
-				}
-			case TrapIn:
-				slog.Debug("processing Trap IN instruction")
-				fmt.Printf("Enter a character: ")
-				reader := bufio.NewReader(os.Stdin)
-				inputChar, _, _ := reader.ReadRune()
-				fmt.Print(string(inputChar))
-				registers[R0] = uint16(inputChar)
-				updateConditionFlags(registers, uint16(R0))
-			case TrapPutSP:
-				slog.Debug("processing Trap PUTSP instruction")
-				addr := registers[R0]
-				for memRead(vm.Memory, addr) != 0x0000 {
-					memoryContents := memRead(vm.Memory, addr)
-					fmt.Print(memoryContents&0xFF, memoryContents>>8)
-					addr++
-				}
-			case TrapHalt:
-				slog.Debug("processing Trap HALT instruction")
-				slog.Info("Halt Program!")
-				running = false
-			}
+			vm.trap(instr)
 		case OpRes:
+			vm.res(instr)
 		case OpRti:
+			vm.rti(instr)
 		default:
 		}
 	}
