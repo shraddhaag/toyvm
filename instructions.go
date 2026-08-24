@@ -154,13 +154,14 @@ func (vm *VM) trapGetC() {
 	slog.Debug("processing Trap GETC instruction")
 	reader := bufio.NewReader(os.Stdin)
 	inputChar, _, _ := reader.ReadRune()
+	fmt.Printf("%c", inputChar)
 	vm.Registers[R0] = uint16(inputChar)
 	updateConditionFlags(vm.Registers, uint16(R0))
 }
 
 func (vm *VM) trapOut() {
 	slog.Debug("processing Trap OUT instruction")
-	fmt.Println(rune(vm.Registers[R0]))
+	fmt.Printf("%c", rune(vm.Registers[R0]))
 }
 
 func (vm *VM) trapPutS() {

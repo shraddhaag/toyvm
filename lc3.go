@@ -29,7 +29,7 @@ func getInputFromKeyBoard() uint16 {
 			slog.Info("halting")
 			os.Exit(1)
 		default:
-			keyPresssed = uint16(key.Code)
+			keyPresssed = uint16(key.Runes[0])
 			return true, nil
 		}
 		return true, nil
