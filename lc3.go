@@ -12,80 +12,15 @@ import (
 	"atomicgo.dev/keyboard/keys"
 )
 
-type OpCode int
-
-const (
-	OpBr   OpCode = iota // branch
-	OpAdd                // add
-	OpLd                 // load
-	OpSt                 // store
-	OpJsr                // jump register
-	OpAnd                // bitwise and
-	OpLdr                // load register
-	OpStr                // store register
-	OpRti                // unused
-	OpNot                // bitwise not
-	OpLdi                // load indirect
-	OpSti                // store indirect
-	OpJmp                // jump
-	OpRes                // reserved (unused)
-	OpLea                // load effective address
-	OpTrap               // execute trap
-)
-
-type TrapCode int
-
-const (
-	TrapGetC  TrapCode = 0x20
-	TrapOut   TrapCode = 0x21
-	TrapPutS  TrapCode = 0x22
-	TrapIn    TrapCode = 0x23
-	TrapPutSP TrapCode = 0x24
-	TrapHalt  TrapCode = 0x25
-)
-
-type Register uint16
-
-const (
-	R0 Register = iota
-	R1
-	R2
-	R3
-	R4
-	R5
-	R6
-	R7
-	PC // program counter
-	COND
-	COUNT
-)
-
-var registers = make([]uint16, COUNT)
-
-type ConditionFlags uint16
-
-const (
-	POS ConditionFlags = 1 << 0
-	ZRO                = 1 << 1
-	NEG                = 1 << 2
-)
-
-func updateConditionFlags(result uint16) {
+func updateConditionFlags(registers []uint16, result uint16) {
 	if registers[result] == 0 {
-		registers[COND] = ZRO
+		registers[RCond] = CondZro
 	} else if (registers[result] >> 15) == 1 {
-		registers[COND] = NEG
+		registers[RCond] = CondNeg
 	} else {
-		registers[COND] = uint16(POS)
+		registers[RCond] = CondPos
 	}
 }
-
-const MemoryMax uint32 = 1 << 16
-
-const (
-	MmapKBSR = 0xFE00
-	MmapKBDR = 0xFE02
-)
 
 func getInputFromKeyBoard() uint16 {
 	var keyPresssed uint16
@@ -103,20 +38,18 @@ func getInputFromKeyBoard() uint16 {
 	return keyPresssed
 }
 
-var memory = make([]uint16, MemoryMax)
-
-func memWrite(address uint16, val uint16) {
+func memWrite(memory []uint16, address uint16, val uint16) {
 	memory[address] = val
 }
 
-func memRead(address uint16) uint16 {
+func memRead(memory []uint16, address uint16) uint16 {
 	if address == MmapKBSR {
 		key := getInputFromKeyBoard()
 		if key != 0 {
-			memWrite(MmapKBSR, 1<<15)
-			memWrite(MmapKBDR, key)
+			memWrite(memory, MmapKBSR, 1<<15)
+			memWrite(memory, MmapKBDR, key)
 		} else {
-			memWrite(MmapKBSR, 0)
+			memWrite(memory, MmapKBSR, 0)
 		}
 	}
 	return memory[address]
@@ -130,12 +63,20 @@ func signExtend(x uint16, bitCount int) uint16 {
 }
 
 func main() {
+	vm := VM{
+		Memory:    make([]uint16, MemoryMax),
+		Registers: make([]uint16, RCount),
+		Executing: Running,
+	}
+
+	registers := vm.Registers
+
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelInfo,
 	})
 	slog.SetDefault(slog.New(handler))
 
-	err := parseArgs()
+	err := parseArgs(vm.Memory)
 	if err != nil {
 		slog.Error("encountered an error in parsing arguments", slog.Any("error", err))
 		return
@@ -145,7 +86,7 @@ func main() {
 
 	// since exactly one condition flag should be set at any given time,
 	// set the Z flag
-	registers[COND] = ZRO
+	registers[RCond] = CondZro
 
 	// set the PC to starting position
 	// 0x3000 is the default
@@ -156,9 +97,9 @@ func main() {
 
 	for running {
 		// fetch instruction and operation
-		instr := memRead(registers[PC])
+		instr := memRead(vm.Memory, registers[PC])
 		registers[PC]++
-		op := OpCode(instr >> 12)
+		op := instr >> 12
 		slog.Debug("start processing instruction", "instruction", instr)
 		switch op {
 		case OpAdd:
@@ -173,7 +114,7 @@ func main() {
 				r2 := instr & 0x7
 				registers[r0] = registers[r1] + registers[r2]
 			}
-			updateConditionFlags(r0)
+			updateConditionFlags(registers, r0)
 		case OpAnd:
 			slog.Debug("processing AND instruction")
 			r0 := (instr >> 9) & 0x7
@@ -186,21 +127,21 @@ func main() {
 				r2 := instr & 0x7
 				registers[r0] = registers[r1] & registers[r2]
 			}
-			updateConditionFlags(r0)
+			updateConditionFlags(registers, r0)
 		case OpNot:
 			slog.Debug("processing NOT instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			registers[r0] = ^registers[r1]
-			updateConditionFlags(r0)
+			updateConditionFlags(registers, r0)
 		case OpBr:
 			slog.Debug("processing BR instruction")
 			n := (instr >> 11) & 0x1
 			z := (instr >> 10) & 0x1
 			p := (instr >> 9) & 0x1
 			offset := signExtend(instr&0x1FF, 9)
-			if (n == 1 && registers[COND] == NEG) || (z == 1 && registers[COND] == ZRO) ||
-				(p == 1 && registers[COND] == uint16(POS)) {
+			if (n == 1 && registers[RCond] == CondNeg) || (z == 1 && registers[RCond] == CondZro) ||
+				(p == 1 && registers[RCond] == CondPos) {
 				registers[PC] += offset
 			}
 		case OpJmp:
@@ -222,61 +163,61 @@ func main() {
 			slog.Debug("processing LD instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
-			registers[r0] = memRead(registers[PC] + offset)
-			updateConditionFlags(r0)
+			registers[r0] = memRead(vm.Memory, registers[PC]+offset)
+			updateConditionFlags(registers, r0)
 		case OpLdi:
 			slog.Debug("processing LDI instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
-			registers[r0] = memRead(memRead(registers[PC] + offset))
-			updateConditionFlags(r0)
+			registers[r0] = memRead(vm.Memory, memRead(vm.Memory, registers[PC]+offset))
+			updateConditionFlags(registers, r0)
 		case OpLdr:
 			slog.Debug("processing LDR instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			offset := signExtend(instr&0x3F, 5)
-			registers[r0] = memRead(registers[r1] + offset)
-			updateConditionFlags(r0)
+			registers[r0] = memRead(vm.Memory, registers[r1]+offset)
+			updateConditionFlags(registers, r0)
 		case OpLea:
 			slog.Debug("processing LEA instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
 			registers[r0] = registers[PC] + offset
-			updateConditionFlags(r0)
+			updateConditionFlags(registers, r0)
 		case OpSt:
 			slog.Debug("processing ST instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
-			memWrite(registers[PC]+offset, registers[r0])
+			memWrite(vm.Memory, registers[PC]+offset, registers[r0])
 		case OpSti:
 			slog.Debug("processing STI instruction")
 			r0 := (instr >> 9) & 0x7
 			offset := signExtend(instr&0x1FF, 9)
-			memWrite(memRead(registers[PC]+offset), registers[r0])
+			memWrite(vm.Memory, memRead(vm.Memory, registers[PC]+offset), registers[r0])
 		case OpStr:
 			slog.Debug("processing STR instruction")
 			r0 := (instr >> 9) & 0x7
 			r1 := (instr >> 6) & 0x7
 			offset := signExtend(instr&0x3F, 6)
-			memWrite(registers[r1]+offset, registers[r0])
+			memWrite(vm.Memory, registers[r1]+offset, registers[r0])
 		case OpTrap:
 			slog.Debug("processing Trap instruction")
 			registers[R7] = registers[PC]
-			switch TrapCode(instr & 0xFF) {
+			switch instr & 0xFF {
 			case TrapGetC:
 				slog.Debug("processing Trap GETC instruction")
 				reader := bufio.NewReader(os.Stdin)
 				inputChar, _, _ := reader.ReadRune()
 				registers[R0] = uint16(inputChar)
-				updateConditionFlags(uint16(R0))
+				updateConditionFlags(vm.Memory, uint16(R0))
 			case TrapOut:
 				slog.Debug("processing Trap OUT instruction")
 				fmt.Println(rune(registers[R0]))
 			case TrapPutS:
 				slog.Debug("processing Trap PUTS instruction")
 				addr := registers[R0]
-				for memRead(addr) != 0 {
-					fmt.Printf("%c", rune(memRead(addr)))
+				for memRead(vm.Memory, addr) != 0 {
+					fmt.Printf("%c", rune(memRead(vm.Memory, addr)))
 					addr++
 				}
 			case TrapIn:
@@ -286,12 +227,12 @@ func main() {
 				inputChar, _, _ := reader.ReadRune()
 				fmt.Print(string(inputChar))
 				registers[R0] = uint16(inputChar)
-				updateConditionFlags(uint16(R0))
+				updateConditionFlags(registers, uint16(R0))
 			case TrapPutSP:
 				slog.Debug("processing Trap PUTSP instruction")
 				addr := registers[R0]
-				for memRead(addr) != 0x0000 {
-					memoryContents := memRead(addr)
+				for memRead(vm.Memory, addr) != 0x0000 {
+					memoryContents := memRead(vm.Memory, addr)
 					fmt.Print(memoryContents&0xFF, memoryContents>>8)
 					addr++
 				}
@@ -307,14 +248,14 @@ func main() {
 	}
 }
 
-func parseArgs() error {
+func parseArgs(memory []uint16) error {
 	if len(os.Args) < 2 {
 		fmt.Println("lc3 [image-file] ...")
 		return fmt.Errorf("too few arguments")
 	}
 
 	for _, path := range os.Args[1:] {
-		err := readImage(path)
+		err := readImage(path, memory)
 		if err != nil {
 			return err
 		}
@@ -322,7 +263,7 @@ func parseArgs() error {
 	return nil
 }
 
-func readImage(filePath string) error {
+func readImage(filePath string, memory []uint16) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
