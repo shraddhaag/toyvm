@@ -10,7 +10,7 @@ import (
 func (vm *VM) add(instr uint16) {
 	slog.Debug("processing ADD instruction")
 	r0 := (instr >> 9) & 0x7
-	r1 := (instr >> 5) & 0x7
+	r1 := (instr >> 6) & 0x7
 	immediateMode := (instr >> 5) & 0x1
 	if immediateMode == 1 {
 		imm5 := signExtend(instr&0x1F, 5)
@@ -25,7 +25,7 @@ func (vm *VM) add(instr uint16) {
 func (vm *VM) and(instr uint16) {
 	slog.Debug("processing AND instruction")
 	r0 := (instr >> 9) & 0x7
-	r1 := (instr >> 5) & 0x7
+	r1 := (instr >> 6) & 0x7
 	immediateMode := (instr >> 5) & 0x1
 	if immediateMode == 1 {
 		imm5 := signExtend(instr&0x1F, 5)
