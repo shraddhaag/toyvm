@@ -912,3 +912,52 @@ func TestSti(t *testing.T) {
 		})
 	}
 }
+
+func TestStr(t *testing.T) {
+	// STR does mem[BaseR + SEXT(offset6)] = SR. Same 6-bit offset field as LDR
+	// (range -32..+31), and never touches any register (STR is a pure store, unlike
+	// LDR it doesn't even write a DR); memWrite has no MMIO special-casing so
+	// there's no 0xFE00 hazard.
+	const sentinelAddr uint16 = 0x0001
+	const sentinelValue uint16 = 0xABCD
+
+	tests := []struct {
+		name       string
+		sr         uint16
+		baseReg    uint16
+		baseValue  uint16
+		offset     uint16 // raw 6-bit offset6 pattern
+		memAddr    uint16 // = baseValue + SEXT(offset)
+		storeValue uint16
+	}{
+		{"STR positive offset", 3, 1, 0x3000, 10, 0x300A, 0x1234},
+		{"STR negative offset (backward reference)", 0, 1, 0x3000, 0x3F, 0x2FFF, 0x8000}, // 0x3F == -1
+		{"STR zero offset", 0, 1, 0x3000, 0, 0x3000, 0x5555},
+		{"STR max positive offset (+31)", 0, 1, 0x3000, 0x1F, 0x301F, 0x001F},
+		{"STR max negative offset (-32)", 0, 1, 0x3000, 0x20, 0x2FE0, 0x0001},
+		{"STR value zero", 0, 1, 0x3000, 10, 0x300A, 0x0000},
+		{"STR SR == BaseR", 1, 1, 0x3000, 10, 0x300A, 0x3000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[tt.baseReg] = tt.baseValue
+			vm.Registers[tt.sr] = tt.storeValue
+			vm.Memory[sentinelAddr] = sentinelValue
+
+			regSnapshot := make([]uint16, RCount)
+			copy(regSnapshot, vm.Registers)
+
+			instr := convertDrBaseROffset6InstructionToUInt16(OpStr, tt.sr, tt.baseReg, tt.offset)
+			vm.str(instr)
+
+			assert.Equal(t, regSnapshot, vm.Registers, "STR must not modify any register")
+			assert.Equal(t, tt.storeValue, vm.Memory[tt.memAddr], "STR wrote the wrong value")
+			assert.Equal(t, sentinelValue, vm.Memory[sentinelAddr], "STR must not modify unrelated memory")
+		})
+	}
+}
