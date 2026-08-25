@@ -662,3 +662,54 @@ func TestLd(t *testing.T) {
 		})
 	}
 }
+
+func TestLdi(t *testing.T) {
+	// LDI does DR = mem[mem[PC + SEXT(PCoffset9)]] - double indirection, and must
+	// never write to memory. Both the pointer location and the address it points
+	// to are kept well clear of 0xFE00 (MmapKBSR) for the same reason as TestLd.
+	tests := []struct {
+		name       string
+		dr         uint16
+		initialPC  uint16
+		offset     uint16 // raw 9-bit PCoffset9 pattern
+		ptrAddr    uint16 // = initialPC + SEXT(offset); holds the pointer
+		ptrValue   uint16 // the pointer itself: the address the value lives at
+		finalValue uint16 // the value at ptrValue, what actually lands in DR
+		expectedCC uint16
+	}{
+		{"LDI positive offset, positive value", 3, 0x3000, 10, 0x300A, 0x4000, 0x0042, CondPos},
+		{"LDI positive offset, zero value", 0, 0x3000, 10, 0x300A, 0x4000, 0x0000, CondZro},
+		{"LDI positive offset, negative value", 0, 0x3000, 10, 0x300A, 0x4000, 0x8000, CondNeg},
+		{"LDI negative offset (backward reference)", 0, 0x3000, 0x1FF, 0x2FFF, 0x4000, 0x1234, CondPos}, // 0x1FF == -1
+		{"LDI zero offset", 0, 0x3000, 0, 0x3000, 0x4000, 0x5555, CondPos},
+		{"LDI max positive offset (+255)", 0, 0x3000, 0x0FF, 0x30FF, 0x4000, 0x00FF, CondPos},
+		{"LDI max negative offset (-256)", 0, 0x3000, 0x100, 0x2F00, 0x4000, 0x0001, CondPos},
+		{"LDI pointer targets address 0", 0, 0x3000, 10, 0x300A, 0x0000, 0x2222, CondPos},
+		{"LDI pointer targets address 0xFFFF", 0, 0x3000, 10, 0x300A, 0xFFFF, 0x7777, CondPos},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[PC] = tt.initialPC
+			vm.Memory[tt.ptrAddr] = tt.ptrValue
+			vm.Memory[tt.ptrValue] = tt.finalValue
+
+			memSnapshot := make([]uint16, MemoryMax)
+			copy(memSnapshot, vm.Memory)
+
+			instr := convertDrPCOffset9InstructionToUInt16(OpLdi, tt.dr, tt.offset)
+			vm.ldi(instr)
+
+			expected := make([]uint16, RCount)
+			expected[PC] = tt.initialPC
+			expected[tt.dr] = tt.finalValue
+			expected[RCond] = tt.expectedCC
+			assert.Equal(t, expected, vm.Registers)
+			assert.Equal(t, memSnapshot, vm.Memory, "LDI must not modify memory")
+		})
+	}
+}
