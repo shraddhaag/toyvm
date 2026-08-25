@@ -810,3 +810,50 @@ func TestLea(t *testing.T) {
 		})
 	}
 }
+
+func TestSt(t *testing.T) {
+	// ST does mem[PC + SEXT(PCoffset9)] = SR. It must never touch any register
+	// (including RCond - stores don't set condition codes) or any other memory cell.
+	const sentinelAddr uint16 = 0x0001
+	const sentinelValue uint16 = 0xABCD
+
+	tests := []struct {
+		name         string
+		sr           uint16
+		initialPC    uint16
+		initialRCond uint16
+		offset       uint16 // raw 9-bit PCoffset9 pattern
+		memAddr      uint16 // = initialPC + SEXT(offset)
+		storeValue   uint16
+	}{
+		{"ST positive offset", 3, 0x3000, CondNeg, 10, 0x300A, 0x1234},
+		{"ST negative offset (backward reference)", 0, 0x3000, CondNeg, 0x1FF, 0x2FFF, 0x8000}, // 0x1FF == -1
+		{"ST zero offset", 0, 0x3000, CondNeg, 0, 0x3000, 0x5555},
+		{"ST max positive offset (+255)", 0, 0x3000, CondNeg, 0x0FF, 0x30FF, 0x00FF},
+		{"ST max negative offset (-256)", 0, 0x3000, CondNeg, 0x100, 0x2F00, 0x0001},
+		{"ST value zero", 0, 0x3000, CondNeg, 10, 0x300A, 0x0000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[PC] = tt.initialPC
+			vm.Registers[RCond] = tt.initialRCond
+			vm.Registers[tt.sr] = tt.storeValue
+			vm.Memory[sentinelAddr] = sentinelValue
+
+			regSnapshot := make([]uint16, RCount)
+			copy(regSnapshot, vm.Registers)
+
+			instr := convertDrPCOffset9InstructionToUInt16(OpSt, tt.sr, tt.offset)
+			vm.st(instr)
+
+			assert.Equal(t, regSnapshot, vm.Registers, "ST must not modify any register")
+			assert.Equal(t, tt.storeValue, vm.Memory[tt.memAddr], "ST wrote the wrong value")
+			assert.Equal(t, sentinelValue, vm.Memory[sentinelAddr], "ST must not modify unrelated memory")
+		})
+	}
+}
