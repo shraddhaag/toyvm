@@ -35,6 +35,14 @@ func convertJsrInstructionToUInt16(pcRelative bool, value uint16) uint16 {
 	return instr
 }
 
+// Shared by LD/LDI/LEA: opcode(4) | DR(3, bits 11-9) | PCoffset9(9, bits 8-0).
+func convertDrPCOffset9InstructionToUInt16(opCode, dr, pcOffset9 uint16) uint16 {
+	instr := (opCode & 0xF) << 12
+	instr |= (dr & 0x7) << 9
+	instr |= pcOffset9 & 0x1FF
+	return instr
+}
+
 func convertBrInstructionToUInt16(n, z, p bool, pcOffset9 uint16) uint16 {
 	instr := uint16(OpBr&0xF) << 12
 	if n {
@@ -603,6 +611,54 @@ func TestJsr(t *testing.T) {
 				expected[tt.baseReg] = tt.baseRegValue
 			}
 			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
+
+func TestLd(t *testing.T) {
+	// LD does DR = mem[PC + SEXT(PCoffset9)] and sets the condition codes based on
+	// the loaded value; it must never write to memory. Addresses below are chosen
+	// well clear of 0xFE00 (MmapKBSR) - memRead treats that address specially and
+	// would block on real keyboard input if a test ever landed on it.
+	tests := []struct {
+		name       string
+		dr         uint16
+		initialPC  uint16
+		offset     uint16 // raw 9-bit PCoffset9 pattern
+		memAddr    uint16
+		memValue   uint16
+		expectedCC uint16
+	}{
+		{"LD positive offset, positive value", 3, 0x3000, 10, 0x300A, 0x0042, CondPos},
+		{"LD positive offset, zero value", 0, 0x3000, 10, 0x300A, 0x0000, CondZro},
+		{"LD positive offset, negative value", 0, 0x3000, 10, 0x300A, 0x8000, CondNeg},
+		{"LD negative offset (backward reference)", 0, 0x3000, 0x1FF, 0x2FFF, 0x1234, CondPos}, // 0x1FF == -1
+		{"LD zero offset", 0, 0x3000, 0, 0x3000, 0x5555, CondPos},
+		{"LD max positive offset (+255)", 0, 0x3000, 0x0FF, 0x30FF, 0x00FF, CondPos},
+		{"LD max negative offset (-256)", 0, 0x3000, 0x100, 0x2F00, 0x0001, CondPos},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[PC] = tt.initialPC
+			vm.Memory[tt.memAddr] = tt.memValue
+
+			memSnapshot := make([]uint16, MemoryMax)
+			copy(memSnapshot, vm.Memory)
+
+			instr := convertDrPCOffset9InstructionToUInt16(OpLd, tt.dr, tt.offset)
+			vm.ld(instr)
+
+			expected := make([]uint16, RCount)
+			expected[PC] = tt.initialPC
+			expected[tt.dr] = tt.memValue
+			expected[RCond] = tt.expectedCC
+			assert.Equal(t, expected, vm.Registers)
+			assert.Equal(t, memSnapshot, vm.Memory, "LD must not modify memory")
 		})
 	}
 }
