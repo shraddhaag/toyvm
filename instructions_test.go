@@ -500,3 +500,37 @@ func TestBr(t *testing.T) {
 		})
 	}
 }
+
+func TestJmp(t *testing.T) {
+	// JMP just does PC = Registers[BaseR]; no condition codes involved, and BaseR
+	// sits in the same bit field (8-6) as SR1 in convertInstructionToUInt16.
+	tests := []struct {
+		name         string
+		baseReg      uint16
+		baseRegValue uint16
+		initialPC    uint16
+		expectedPC   uint16
+	}{
+		{"PC = R1", 1, 0x4000, 0x3000, 0x4000},
+		{"PC = R7 (RET idiom)", 7, 0x3050, 0x3060, 0x3050},
+		{"PC = R0", 0, 0x3100, 0x3000, 0x3100},
+		{"PC = R1, target address 0", 1, 0x0000, 0x3000, 0x0000},
+		{"PC = R1, target address max (0xFFFF)", 1, 0xFFFF, 0x3000, 0xFFFF},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			vm.Registers[tt.baseReg] = tt.baseRegValue
+			vm.Registers[PC] = tt.initialPC
+
+			instr := convertInstructionToUInt16(OpJmp, 0, tt.baseReg, 0, false, 0)
+			vm.jmp(instr)
+
+			expected := make([]uint16, RCount)
+			expected[tt.baseReg] = tt.baseRegValue
+			expected[PC] = tt.expectedPC
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
