@@ -353,3 +353,73 @@ func TestAnd(t *testing.T) {
 		})
 	}
 }
+
+func TestNot(t *testing.T) {
+	// NOT has a single addressing mode (DR = ^SR), so the full case space is just
+	// the 3 condition-code outcomes crossed with DR == SR or DR != SR.
+	tests := []struct {
+		name      string
+		registers []uint16
+		r0, r1    uint16
+		output    []uint16
+		cc        uint16
+	}{
+		{
+			"R0 = NOT(R1)",
+			[]uint16{0, 0x1234},
+			0, 1,
+			[]uint16{0xEDCB, 0x1234},
+			CondNeg,
+		},
+		{
+			"R0 = NOT(R1), result positive",
+			[]uint16{0, 0x8000},
+			0, 1,
+			[]uint16{0x7FFF, 0x8000},
+			CondPos,
+		},
+		{
+			"R0 = NOT(R1), result zero",
+			[]uint16{0, 0xFFFF},
+			0, 1,
+			[]uint16{0, 0xFFFF},
+			CondZro,
+		},
+		{
+			"R0 = NOT(R0)", // DR == SR, result positive
+			[]uint16{0x8000},
+			0, 0,
+			[]uint16{0x7FFF},
+			CondPos,
+		},
+		{
+			"R0 = NOT(R0), result negative", // DR == SR, classic NOT(0) == -1
+			[]uint16{0x0000},
+			0, 0,
+			[]uint16{0xFFFF},
+			CondNeg,
+		},
+		{
+			"R0 = NOT(R0), result zero", // DR == SR
+			[]uint16{0xFFFF},
+			0, 0,
+			[]uint16{0},
+			CondZro,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			copy(vm.Registers, tt.registers)
+
+			instr := convertInstructionToUInt16(OpNot, tt.r0, tt.r1, 0, false, 0)
+			vm.not(instr)
+
+			expected := make([]uint16, RCount)
+			copy(expected, tt.output)
+			expected[RCond] = tt.cc
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
