@@ -96,7 +96,7 @@ func (vm *VM) ldr(instr uint16) {
 	slog.Debug("processing LDR instruction")
 	r0 := (instr >> 9) & 0x7
 	r1 := (instr >> 6) & 0x7
-	offset := signExtend(instr&0x3F, 5)
+	offset := signExtend(instr&0x3F, 6)
 	vm.Registers[r0] = memRead(vm.Memory, vm.Registers[r1]+offset)
 	updateConditionFlags(vm.Registers, r0)
 }

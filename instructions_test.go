@@ -43,6 +43,15 @@ func convertDrPCOffset9InstructionToUInt16(opCode, dr, pcOffset9 uint16) uint16 
 	return instr
 }
 
+// Shared by LDR/STR: opcode(4) | DR/SR(3, bits 11-9) | BaseR(3, bits 8-6) | offset6(6, bits 5-0).
+func convertDrBaseROffset6InstructionToUInt16(opCode, dr, baseR, offset6 uint16) uint16 {
+	instr := (opCode & 0xF) << 12
+	instr |= (dr & 0x7) << 9
+	instr |= (baseR & 0x7) << 6
+	instr |= offset6 & 0x3F
+	return instr
+}
+
 func convertBrInstructionToUInt16(n, z, p bool, pcOffset9 uint16) uint16 {
 	instr := uint16(OpBr&0xF) << 12
 	if n {
@@ -710,6 +719,55 @@ func TestLdi(t *testing.T) {
 			expected[RCond] = tt.expectedCC
 			assert.Equal(t, expected, vm.Registers)
 			assert.Equal(t, memSnapshot, vm.Memory, "LDI must not modify memory")
+		})
+	}
+}
+
+func TestLdr(t *testing.T) {
+	// LDR does DR = mem[BaseR + SEXT(offset6)] and sets the condition codes based on
+	// the loaded value; it must never write to memory. offset6 is a 6-bit field, so
+	// its range is -32..+31 (sign bit is bit 5 - this was the bug just fixed above).
+	tests := []struct {
+		name       string
+		dr         uint16
+		baseReg    uint16
+		baseValue  uint16
+		offset     uint16 // raw 6-bit offset6 pattern
+		memAddr    uint16 // = baseValue + SEXT(offset)
+		memValue   uint16
+		expectedCC uint16
+	}{
+		{"LDR positive offset, positive value", 3, 1, 0x3000, 10, 0x300A, 0x0042, CondPos},
+		{"LDR positive offset, zero value", 3, 1, 0x3000, 10, 0x300A, 0x0000, CondZro},
+		{"LDR positive offset, negative value", 3, 1, 0x3000, 10, 0x300A, 0x8000, CondNeg},
+		{"LDR negative offset (backward reference)", 3, 1, 0x3000, 0x3F, 0x2FFF, 0x1234, CondPos}, // 0x3F == -1
+		{"LDR zero offset", 3, 1, 0x3000, 0, 0x3000, 0x5555, CondPos},
+		{"LDR max positive offset (+31)", 3, 1, 0x3000, 0x1F, 0x301F, 0x001F, CondPos},
+		{"LDR max negative offset (-32)", 3, 1, 0x3000, 0x20, 0x2FE0, 0x0001, CondPos},
+		{"LDR DR == BaseR", 1, 1, 0x3000, 10, 0x300A, 0x0077, CondPos},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[tt.baseReg] = tt.baseValue
+			vm.Memory[tt.memAddr] = tt.memValue
+
+			memSnapshot := make([]uint16, MemoryMax)
+			copy(memSnapshot, vm.Memory)
+
+			instr := convertDrBaseROffset6InstructionToUInt16(OpLdr, tt.dr, tt.baseReg, tt.offset)
+			vm.ldr(instr)
+
+			expected := make([]uint16, RCount)
+			expected[tt.baseReg] = tt.baseValue // set first; DR == BaseR case overwrites it next
+			expected[tt.dr] = tt.memValue
+			expected[RCond] = tt.expectedCC
+			assert.Equal(t, expected, vm.Registers)
+			assert.Equal(t, memSnapshot, vm.Memory, "LDR must not modify memory")
 		})
 	}
 }
