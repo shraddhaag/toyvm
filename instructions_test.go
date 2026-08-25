@@ -211,3 +211,145 @@ func TestAdd(t *testing.T) {
 		})
 	}
 }
+
+func TestAnd(t *testing.T) {
+	tests := []struct {
+		name          string
+		registers     []uint16
+		r0, r1, r2    uint16
+		immediateMode bool
+		offset        uint16
+		output        []uint16
+		cc            uint16
+	}{
+		// register mode
+		{
+			"R0 = R1 & R2",
+			[]uint16{0, 0b0110, 0b0011},
+			0, 1, 2,
+			false, 0,
+			[]uint16{0b0010, 0b0110, 0b0011},
+			CondPos,
+		},
+		{
+			"register mode: zero result (no overlapping bits)",
+			[]uint16{0, 0x0F0F, 0xF0F0},
+			0, 1, 2,
+			false, 0,
+			[]uint16{0, 0x0F0F, 0xF0F0},
+			CondZro,
+		},
+		{
+			"register mode: negative result (top bit set in both operands)",
+			[]uint16{0, 0x8001, 0x8002},
+			0, 1, 2,
+			false, 0,
+			[]uint16{0x8000, 0x8001, 0x8002},
+			CondNeg,
+		},
+		{
+			"R0 = R1 & R1", // SR1 == SR2: ANDing a register with itself is a no-op copy
+			[]uint16{0, 0x1234},
+			0, 1, 1,
+			false, 0,
+			[]uint16{0x1234, 0x1234},
+			CondPos,
+		},
+		{
+			"R0 &= R2", // DR == SR1
+			[]uint16{0xFF00, 0, 0x0FF0},
+			0, 0, 2,
+			false, 0,
+			[]uint16{0x0F00, 0, 0x0FF0},
+			CondPos,
+		},
+		{
+			"R0 &= R1", // DR == SR2
+			[]uint16{0xFF00, 0x0FF0},
+			0, 1, 0,
+			false, 0,
+			[]uint16{0x0F00, 0x0FF0},
+			CondPos,
+		},
+		{
+			"R0 &= R0", // DR == SR1 == SR2: also a no-op, but exercises the negative path
+			[]uint16{0x8001},
+			0, 0, 0,
+			false, 0,
+			[]uint16{0x8001},
+			CondNeg,
+		},
+		// immediate mode
+		{
+			"immediate mode: AND with #0 clears the register",
+			[]uint16{0, 0x1234},
+			0, 1, 0,
+			true, 0,
+			[]uint16{0, 0x1234},
+			CondZro,
+		},
+		{
+			"immediate mode: AND with #-1 preserves a positive value",
+			[]uint16{0, 0x1234},
+			0, 1, 0,
+			true, 0x1F, // imm5 = 0b11111, sign-extends to 0xFFFF (all-ones mask)
+			[]uint16{0x1234, 0x1234},
+			CondPos,
+		},
+		{
+			"immediate mode: AND with #-1 preserves a negative value",
+			[]uint16{0, 0x8001},
+			0, 1, 0,
+			true, 0x1F,
+			[]uint16{0x8001, 0x8001},
+			CondNeg,
+		},
+		{
+			"immediate mode: positive imm masks low bits",
+			[]uint16{0, 0xFFFF},
+			0, 1, 0,
+			true, 0x0F, // imm5 = 0b01111 = +15, mask for the low nibble
+			[]uint16{0x000F, 0xFFFF},
+			CondPos,
+		},
+		{
+			"immediate mode: negative imm masks high bits, nonzero result",
+			[]uint16{0, 0xFFFF},
+			0, 1, 0,
+			true, 0x10, // imm5 = 0b10000 = -16, sign-extends to 0xFFF0 (upper-bits mask)
+			[]uint16{0xFFF0, 0xFFFF},
+			CondNeg,
+		},
+		{
+			"immediate mode: negative imm masks high bits, zero result",
+			[]uint16{0, 0x000F},
+			0, 1, 0,
+			true, 0x10, // same 0xFFF0 mask, but input has nothing in the upper bits
+			[]uint16{0, 0x000F},
+			CondZro,
+		},
+		{
+			"immediate mode: DR == SR1",
+			[]uint16{0xFF},
+			0, 0, 0,
+			true, 0x0F,
+			[]uint16{0x0F},
+			CondPos,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			copy(vm.Registers, tt.registers)
+
+			instr := convertInstructionToUInt16(OpAnd, tt.r0, tt.r1, tt.r2, tt.immediateMode, tt.offset)
+			vm.and(instr)
+
+			expected := make([]uint16, RCount)
+			copy(expected, tt.output)
+			expected[RCond] = tt.cc
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
