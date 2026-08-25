@@ -771,3 +771,42 @@ func TestLdr(t *testing.T) {
 		})
 	}
 }
+
+func TestLea(t *testing.T) {
+	// LEA does DR = PC + SEXT(PCoffset9) and sets the condition codes on the
+	// computed address; unlike LD/LDI it never touches memory at all, so Memory is
+	// deliberately left nil here - if lea() ever dereferenced it, this would panic.
+	tests := []struct {
+		name       string
+		dr         uint16
+		initialPC  uint16
+		offset     uint16 // raw 9-bit PCoffset9 pattern
+		expectedDR uint16
+		expectedCC uint16
+	}{
+		{"LEA positive offset", 3, 0x3000, 10, 0x300A, CondPos},
+		{"LEA negative offset (backward reference)", 0, 0x3000, 0x1FF, 0x2FFF, CondPos}, // 0x1FF == -1
+		{"LEA zero offset", 0, 0x3000, 0, 0x3000, CondPos},
+		{"LEA max positive offset (+255)", 0, 0x3000, 0x0FF, 0x30FF, CondPos},
+		{"LEA max negative offset (-256)", 0, 0x3000, 0x100, 0x2F00, CondPos},
+		{"LEA computed address is zero", 0, 0x0100, 0x100, 0x0000, CondZro},
+		{"LEA computed address is negative (positive overflow)", 0, 0x7FFF, 1, 0x8000, CondNeg},
+		{"LEA unsigned wraparound to zero", 0, 0xFFFF, 1, 0x0000, CondZro},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			vm.Registers[PC] = tt.initialPC
+
+			instr := convertDrPCOffset9InstructionToUInt16(OpLea, tt.dr, tt.offset)
+			vm.lea(instr)
+
+			expected := make([]uint16, RCount)
+			expected[PC] = tt.initialPC
+			expected[tt.dr] = tt.expectedDR
+			expected[RCond] = tt.expectedCC
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
