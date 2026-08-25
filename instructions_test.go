@@ -857,3 +857,58 @@ func TestSt(t *testing.T) {
 		})
 	}
 }
+
+func TestSti(t *testing.T) {
+	// STI does mem[mem[PC + SEXT(PCoffset9)]] = SR - double indirection on the write
+	// side. The pointer lookup uses memRead, so ptrAddr stays clear of 0xFE00
+	// (MmapKBSR) for the same reason as TestLdi; the final write uses memWrite,
+	// which has no such special-casing. Must never touch registers (incl. RCond),
+	// the pointer cell itself, or any unrelated memory.
+	const sentinelAddr uint16 = 0x0001
+	const sentinelValue uint16 = 0xABCD
+
+	tests := []struct {
+		name         string
+		sr           uint16
+		initialPC    uint16
+		initialRCond uint16
+		offset       uint16 // raw 9-bit PCoffset9 pattern
+		ptrAddr      uint16 // = initialPC + SEXT(offset); holds the pointer
+		ptrValue     uint16 // the pointer itself: final write address
+		storeValue   uint16
+	}{
+		{"STI positive offset", 3, 0x3000, CondNeg, 10, 0x300A, 0x4000, 0x1234},
+		{"STI negative offset (backward reference)", 0, 0x3000, CondNeg, 0x1FF, 0x2FFF, 0x4000, 0x8000}, // 0x1FF == -1
+		{"STI zero offset", 0, 0x3000, CondNeg, 0, 0x3000, 0x4000, 0x5555},
+		{"STI max positive offset (+255)", 0, 0x3000, CondNeg, 0x0FF, 0x30FF, 0x4000, 0x00FF},
+		{"STI max negative offset (-256)", 0, 0x3000, CondNeg, 0x100, 0x2F00, 0x4000, 0x0001},
+		{"STI pointer targets address 0", 0, 0x3000, CondNeg, 10, 0x300A, 0x0000, 0x2222},
+		{"STI pointer targets address 0xFFFF", 0, 0x3000, CondNeg, 10, 0x300A, 0xFFFF, 0x7777},
+		{"STI value zero", 0, 0x3000, CondNeg, 10, 0x300A, 0x4000, 0x0000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{
+				Registers: make([]uint16, RCount),
+				Memory:    make([]uint16, MemoryMax),
+			}
+			vm.Registers[PC] = tt.initialPC
+			vm.Registers[RCond] = tt.initialRCond
+			vm.Registers[tt.sr] = tt.storeValue
+			vm.Memory[tt.ptrAddr] = tt.ptrValue
+			vm.Memory[sentinelAddr] = sentinelValue
+
+			regSnapshot := make([]uint16, RCount)
+			copy(regSnapshot, vm.Registers)
+
+			instr := convertDrPCOffset9InstructionToUInt16(OpSti, tt.sr, tt.offset)
+			vm.sti(instr)
+
+			assert.Equal(t, regSnapshot, vm.Registers, "STI must not modify any register")
+			assert.Equal(t, tt.storeValue, vm.Memory[tt.ptrValue], "STI wrote the wrong value")
+			assert.Equal(t, tt.ptrValue, vm.Memory[tt.ptrAddr], "STI must not modify the pointer cell itself")
+			assert.Equal(t, sentinelValue, vm.Memory[sentinelAddr], "STI must not modify unrelated memory")
+		})
+	}
+}
