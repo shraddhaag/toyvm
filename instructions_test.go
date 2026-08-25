@@ -22,6 +22,21 @@ func convertInstructionToUInt16(opCode uint16, r0, r1, r2 uint16,
 	return instr
 }
 
+func convertBrInstructionToUInt16(n, z, p bool, pcOffset9 uint16) uint16 {
+	instr := uint16(OpBr&0xF) << 12
+	if n {
+		instr |= 1 << 11
+	}
+	if z {
+		instr |= 1 << 10
+	}
+	if p {
+		instr |= 1 << 9
+	}
+	instr |= pcOffset9 & 0x1FF
+	return instr
+}
+
 func TestAdd(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -419,6 +434,68 @@ func TestNot(t *testing.T) {
 			expected := make([]uint16, RCount)
 			copy(expected, tt.output)
 			expected[RCond] = tt.cc
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
+
+func TestBr(t *testing.T) {
+	// BR doesn't touch the condition codes itself, so a case is fully described by
+	// which n/z/p bits are set, what CC is active going in, and where PC ends up.
+	const startPC uint16 = 0x3000
+
+	tests := []struct {
+		name        string
+		n, z, p     bool
+		initialCond uint16
+		offset      uint16 // raw 9-bit PCoffset9 pattern, before sign extension
+		expectedPC  uint16
+	}{
+		// single flag: full taken / not-taken matrix
+		{"BRn taken (CC = Neg)", true, false, false, CondNeg, 10, startPC + 10},
+		{"BRn not taken (CC = Zro)", true, false, false, CondZro, 10, startPC},
+		{"BRn not taken (CC = Pos)", true, false, false, CondPos, 10, startPC},
+		{"BRz taken (CC = Zro)", false, true, false, CondZro, 10, startPC + 10},
+		{"BRz not taken (CC = Neg)", false, true, false, CondNeg, 10, startPC},
+		{"BRz not taken (CC = Pos)", false, true, false, CondPos, 10, startPC},
+		{"BRp taken (CC = Pos)", false, false, true, CondPos, 10, startPC + 10},
+		{"BRp not taken (CC = Neg)", false, false, true, CondNeg, 10, startPC},
+		{"BRp not taken (CC = Zro)", false, false, true, CondZro, 10, startPC},
+
+		// two flags: prove the OR from both trigger paths, plus one non-trigger
+		{"BRnz taken via CC = Neg", true, true, false, CondNeg, 10, startPC + 10},
+		{"BRnz taken via CC = Zro", true, true, false, CondZro, 10, startPC + 10},
+		{"BRnz not taken (CC = Pos)", true, true, false, CondPos, 10, startPC},
+		{"BRnp taken via CC = Neg", true, false, true, CondNeg, 10, startPC + 10},
+		{"BRnp taken via CC = Pos", true, false, true, CondPos, 10, startPC + 10},
+		{"BRzp taken via CC = Zro", false, true, true, CondZro, 10, startPC + 10},
+		{"BRzp taken via CC = Pos", false, true, true, CondPos, 10, startPC + 10},
+
+		// unconditional (n=z=p=1): branches no matter what CC is active
+		{"BRnzp taken (CC = Neg)", true, true, true, CondNeg, 10, startPC + 10},
+		{"BRnzp taken (CC = Zro)", true, true, true, CondZro, 10, startPC + 10},
+		{"BRnzp taken (CC = Pos)", true, true, true, CondPos, 10, startPC + 10},
+
+		// n=z=p=0 is a valid encoding too: never branches, regardless of CC
+		{"BR with n=z=p=0 never taken", false, false, false, CondZro, 10, startPC},
+
+		// PCoffset9 range boundaries
+		{"BRnzp max positive offset (+255)", true, true, true, CondPos, 0x0FF, startPC + 255},
+		{"BRnzp max negative offset (-256)", true, true, true, CondPos, 0x100, startPC - 256},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			vm.Registers[RCond] = tt.initialCond
+			vm.Registers[PC] = startPC
+
+			instr := convertBrInstructionToUInt16(tt.n, tt.z, tt.p, tt.offset)
+			vm.br(instr)
+
+			expected := make([]uint16, RCount)
+			expected[RCond] = tt.initialCond
+			expected[PC] = tt.expectedPC
 			assert.Equal(t, expected, vm.Registers)
 		})
 	}
