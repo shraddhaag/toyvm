@@ -22,6 +22,19 @@ func convertInstructionToUInt16(opCode uint16, r0, r1, r2 uint16,
 	return instr
 }
 
+// pcRelative selects the two JSR encodings: true uses value as the raw 11-bit
+// PCoffset11 pattern (JSR), false uses value as a 3-bit BaseR register index (JSRR).
+func convertJsrInstructionToUInt16(pcRelative bool, value uint16) uint16 {
+	instr := uint16(OpJsr&0xF) << 12
+	if pcRelative {
+		instr |= 1 << 11
+		instr |= value & 0x7FF
+	} else {
+		instr |= (value & 0x7) << 6
+	}
+	return instr
+}
+
 func convertBrInstructionToUInt16(n, z, p bool, pcOffset9 uint16) uint16 {
 	instr := uint16(OpBr&0xF) << 12
 	if n {
@@ -530,6 +543,65 @@ func TestJmp(t *testing.T) {
 			expected := make([]uint16, RCount)
 			expected[tt.baseReg] = tt.baseRegValue
 			expected[PC] = tt.expectedPC
+			assert.Equal(t, expected, vm.Registers)
+		})
+	}
+}
+
+func TestJsr(t *testing.T) {
+	// JSR always does R7 = PC first, then either PC = Registers[BaseR] (JSRR, bit 11
+	// = 0) or PC += SEXT(PCoffset11) (JSR, bit 11 = 1). Since R7 is written before
+	// it's read, JSRR R7 is a real edge case: R7 gets clobbered with the old PC
+	// before that same value is read back out as the jump target.
+	tests := []struct {
+		name         string
+		pcRelative   bool
+		baseReg      uint16 // used when !pcRelative
+		baseRegValue uint16 // used when !pcRelative: initial Registers[baseReg]
+		offset       uint16 // used when pcRelative: raw PCoffset11 pattern
+		initialPC    uint16
+		initialR7    uint16 // sentinel prior R7 content, to prove it gets overwritten
+		expectedPC   uint16
+		expectedR7   uint16
+	}{
+		// JSRR (register mode)
+		{"JSRR R1", false, 1, 0x4000, 0, 0x3000, 0x9999, 0x4000, 0x3000},
+		{"JSRR R0", false, 0, 0x3100, 0, 0x3000, 0x9999, 0x3100, 0x3000},
+		{"JSRR R7 (BaseR is R7 itself)", false, 7, 0x5000, 0, 0x3000, 0x5000, 0x3000, 0x3000},
+		{"JSRR R1, target address 0", false, 1, 0x0000, 0, 0x3000, 0x9999, 0x0000, 0x3000},
+		{"JSRR R1, target address max (0xFFFF)", false, 1, 0xFFFF, 0, 0x3000, 0x9999, 0xFFFF, 0x3000},
+
+		// JSR (PC-relative mode)
+		{"JSR positive offset", true, 0, 0, 10, 0x3000, 0x9999, 0x300A, 0x3000},
+		{"JSR negative offset", true, 0, 0, 0x7FB, 0x3000, 0x9999, 0x2FFB, 0x3000}, // 0x7FB == -5
+		{"JSR max positive offset (+1023)", true, 0, 0, 0x3FF, 0x3000, 0x9999, 0x33FF, 0x3000},
+		{"JSR max negative offset (-1024)", true, 0, 0, 0x400, 0x3000, 0x9999, 0x2C00, 0x3000},
+		{"JSR zero offset", true, 0, 0, 0, 0x3000, 0x9999, 0x3000, 0x3000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vm := VM{Registers: make([]uint16, RCount)}
+			vm.Registers[PC] = tt.initialPC
+			vm.Registers[R7] = tt.initialR7
+			if !tt.pcRelative {
+				vm.Registers[tt.baseReg] = tt.baseRegValue
+			}
+
+			var instr uint16
+			if tt.pcRelative {
+				instr = convertJsrInstructionToUInt16(true, tt.offset)
+			} else {
+				instr = convertJsrInstructionToUInt16(false, tt.baseReg)
+			}
+			vm.jsr(instr)
+
+			expected := make([]uint16, RCount)
+			expected[PC] = tt.expectedPC
+			expected[R7] = tt.expectedR7
+			if !tt.pcRelative && tt.baseReg != uint16(R7) {
+				expected[tt.baseReg] = tt.baseRegValue
+			}
 			assert.Equal(t, expected, vm.Registers)
 		})
 	}
