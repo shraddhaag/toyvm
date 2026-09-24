@@ -1,6 +1,6 @@
 module github.com/shraddhaag/toyvm
 
-go 1.26.3
+go 1.27
 
 require (
 	atomicgo.dev/keyboard v0.2.10
