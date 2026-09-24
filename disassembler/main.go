@@ -11,13 +11,13 @@ import (
 func main() {
 	err := parseArgs()
 	if err != nil {
-		fmt.Printf("error encountered: ", err)
+		fmt.Println("error encountered: ", err)
 	}
 
 	for _, path := range os.Args[1:] {
 		hexDump, err := readImageInHex(path)
 		if err != nil {
-			fmt.Printf("error reading file: ", err)
+			fmt.Println("error reading file: ", err)
 		}
 
 		for i, hexCode := range hexDump {
