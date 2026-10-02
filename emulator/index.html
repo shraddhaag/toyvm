@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LC-3 emulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  /* Amber phosphor terminal: every colour is a shade of amber on brown-black. */
+  :root {
+    color-scheme: dark;
+    --paper: #120B03;
+    --panel: #1A1207;
+    --ink: #FFB000;
+    --muted: #A7732A;
+    --line: #3B2A12;
+    --signal: #FFD27A;
+    --signal-tint: rgba(255, 176, 0, 0.17);
+    --change: #FFF0C4;
+    --change-tint: rgba(255, 240, 196, 0.12);
+    --bp: #FF5A36;
+    --reg: #FFC64A;
+    --console-bg: #0C0802;
+    --console-ink: #FFB000;
+    --glow: rgba(255, 176, 0, 0.55);
+    --mono: 'VT323', ui-monospace, Menlo, Consolas, monospace;
+    --sans: var(--mono);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 19px;
+    line-height: 1.2;
+    display: flex;
+    flex-direction: column;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--reg); outline-offset: 2px; }
+
+  /* ---------- toolbar ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: 26px;
+    font-weight: 400;
+    margin: 0 12px 0 0;
+    text-shadow: 0 0 8px var(--glow);
+  }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .btn {
+    border: 1px solid var(--line);
+    background: transparent;
+    border-radius: 0;
+    padding: 2px 12px;
+    cursor: pointer;
+    font-weight: 400;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--muted); }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+  .btn kbd {
+    font-family: var(--mono);
+    font-size: 16px;
+    opacity: 0.6;
+    margin-left: 6px;
+  }
+  #fileInput { display: none; }
+  #fileName { font-family: var(--mono); font-size: 18px; color: var(--muted); }
+  .spacer { flex: 1; }
+  #status { color: var(--muted); font-size: 18px; }
+  #status.error { color: var(--bp); }
+  #state {
+    font-size: 18px;
+    font-weight: 400;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  #state:empty { display: none; }
+  #state[data-state="running"] { border-color: var(--change); color: var(--change); }
+  #state[data-state="waiting"] { border-color: var(--signal); background: var(--signal-tint); color: var(--ink); }
+  #state[data-state="halted"]  { border-color: var(--bp); color: var(--bp); }
+
+  /* ---------- layout ---------- */
+  main {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(380px, 1fr) minmax(440px, 520px);
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  .col { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .col, section, section > * { min-width: 0; }
+  .col > section { flex: none; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  section > h2 {
+    font-size: 20px;
+    font-weight: 400;
+    margin: 0;
+    padding: 8px 14px;
+    min-height: 40px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section > h2 small { font-weight: 400; color: var(--muted); font-size: 17px; }
+  .fold {
+    border: 0;
+    background: none;
+    padding: 2px 4px 2px 0;
+    margin: -2px 0;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .fold::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.15s;
+  }
+  .fold:hover::before { border-color: var(--ink); }
+  section.collapsed .fold::before { transform: rotate(-45deg); }
+  section.collapsed > h2 { border-bottom-color: transparent; }
+  section.collapsed > :not(h2),
+  section.collapsed > h2 > :not(.fold) { display: none; }
+  .col > section.collapsed,
+  .col > #disasmSection.collapsed,
+  .col > #consoleSection.collapsed { flex: none; min-height: 0; height: auto; }
+  @media (prefers-reduced-motion: reduce) { .fold::before { transition: none; } }
+  .body { padding: 10px 14px; }
+
+  /* ---------- disassembly ---------- */
+  .col > #disasmSection { flex: 1 1 0; min-height: 240px; }
+  #disasmPanel { flex: 1; overflow: auto; min-height: 0; position: relative; }
+  #empty {
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--muted);
+  }
+  #empty p { margin: 0 0 12px 0; }
+  body.dragging #disasmSection { outline: 2px dashed var(--reg); outline-offset: -6px; }
+  table.disasm { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 19px; }
+  .disasm td { padding: 0 10px; white-space: nowrap; }
+  .disasm tr { cursor: pointer; border-left: 3px solid transparent; }
+  .disasm tr:hover { background: var(--change-tint); }
+  .disasm td.gutter { width: 18px; padding: 0 0 0 8px; color: var(--bp); }
+  .disasm tr:not(.bp):hover td.gutter::before { content: '\25CF'; opacity: 0.3; }
+  .disasm tr.bp td.gutter::before { content: '\25CF'; }
+  .disasm td.addr { color: var(--muted); }
+  .disasm td.hex { color: var(--muted); opacity: 0.75; }
+  .disasm tr.row-pc { background: var(--signal-tint); border-left-color: var(--signal); }
+  .disasm tr.row-pc td.addr { color: var(--ink); font-weight: 600; }
+  .disasm tr.row-changed td.hex { color: var(--change); opacity: 1; }
+  .op { display: inline-block; min-width: 6ch; }
+  .r { color: var(--reg); }
+  .imm { color: var(--change); }
+  .tgt { color: var(--ink); text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+  .disasm td.comment { color: var(--muted); width: 100%; }
+  .disasm tr.data td.asm, .disasm tr.data .op { color: var(--muted); font-weight: 400; }
+
+  /* ---------- registers ---------- */
+  .regs { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 12px; align-items: center; font-family: var(--mono); font-size: 19px; }
+  .regs .name { font-weight: 600; padding: 0 4px; border-radius: 3px; }
+  .regs .val { text-align: right; min-width: 7ch; }
+  .regs .changed { background: var(--change-tint); color: var(--change); }
+  .bits { display: flex; gap: 2px; }
+  .bits i {
+    width: 11px; height: 13px;
+    border: 1px solid #4A3514;
+  }
+  .bits i:nth-child(4n):not(:last-child) { margin-right: 5px; }
+  .bits i.on { background: var(--ink); border-color: var(--ink); box-shadow: 0 0 5px rgba(255, 176, 0, 0.6); }
+  .bits i.flip { border-color: var(--change); }
+  .bits i.on.flip { background: var(--change); }
+  .pcrow .bits i.on { background: var(--signal); border-color: var(--signal); }
+  .regs .sep { grid-column: 1 / -1; border-top: 1px solid var(--line); margin: 6px 0 3px; }
+  .flags { display: flex; gap: 6px; }
+  .lamp {
+    font-weight: 400;
+    width: 24px; height: 18px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 17px;
+  }
+  .lamp.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+  #lastInstr { margin-top: 10px; font-family: var(--mono); font-size: 18px; color: var(--muted); }
+  #lastInstr b { color: var(--ink); font-weight: 500; }
+
+  /* ---------- memory ---------- */
+  .memnav { display: flex; align-items: center; gap: 6px; flex: 1; font-weight: 400; }
+  .memnav input[type=text] {
+    font-family: var(--mono);
+    font-size: 18px;
+    width: 8ch;
+    padding: 0 6px;
+    border: 1px solid var(--line);
+    background: var(--console-bg);
+  }
+  .memnav .btn { padding: 0 8px; }
+  .memnav label { margin-left: auto; color: var(--muted); font-size: 18px; display: flex; gap: 4px; align-items: center; }
+  table.mem { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 18px; }
+  .mem td { padding: 2px 4px; text-align: right; border-radius: 3px; }
+  .mem td.addr { color: var(--muted); text-align: left; padding-right: 10px; }
+  .mem td.zero { color: var(--muted); opacity: 0.55; }
+  .mem td.changed { background: var(--change-tint); color: var(--change); opacity: 1; }
+  .mem td.pc { box-shadow: inset 0 0 0 1px var(--signal); }
+
+  /* ---------- console ---------- */
+  .col > #consoleSection { flex: 1 1 0; min-height: 240px; }
+  .memwrap { overflow-x: auto; }
+  #console {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 12px 14px;
+    overflow: auto;
+    white-space: pre;
+    font-family: var(--mono);
+    font-size: 19px;
+    line-height: 1.1;
+    background: var(--console-bg);
+    color: var(--console-ink);
+    text-shadow: 0 0 6px var(--glow);
+  }
+  #inputRow {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 14px;
+    border-top: 1px solid var(--line);
+    font-size: 18px;
+  }
+  #inputLabel { color: var(--muted); white-space: nowrap; }
+  #kbd {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    background: var(--console-bg);
+    font-family: var(--mono);
+    font-size: 18px;
+  }
+  #bufLabel { color: var(--muted); font-size: 18px; white-space: nowrap; }
+  #inputRow.waiting { background: var(--signal-tint); }
+  #inputRow.waiting #inputLabel { color: var(--ink); }
+  #inputRow.waiting #kbd { border-color: var(--signal); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--signal-tint); }
+    50%      { box-shadow: 0 0 0 4px var(--signal-tint); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #inputRow.waiting #kbd { animation: none; }
+  }
+
+  @media (max-width: 960px) {
+    html, body { height: auto; }
+    body { display: block; }
+    main { display: flex; flex-direction: column; padding: 12px 16px; gap: 16px; }
+    .col, .col.side { overflow: visible; gap: 16px; }
+    .col > #disasmSection { height: 60vh; flex: none; }
+    .col > #consoleSection { flex: none; height: 420px; }
+    header { padding: 10px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LC-3 <span>emulator</span></h1>
+  <label class="btn primary" for="fileInput" tabindex="0" id="openBtn">Open .obj file</label>
+  <input type="file" id="fileInput" accept=".obj">
+  <span id="fileName"></span>
+  <button class="btn" id="stepBtn" disabled title="Run one instruction">Step<kbd>S</kbd></button>
+  <button class="btn" id="runBtn" disabled title="Run until HALT, a breakpoint or Pause">Run<kbd>R</kbd></button>
+  <button class="btn" id="resetBtn" disabled title="Reload the program and clear the machine state">Reset</button>
+  <button class="btn" id="fmtToggle" title="Show values as hex or signed decimal">Hex</button>
+  <span id="state"></span>
+  <span class="spacer"></span>
+  <span id="status"></span>
+</header>
+
+<main>
+  <div class="col">
+    <section id="disasmSection" data-fold="disasm">
+      <h2>Disassembly <small>Click a line to set a breakpoint</small></h2>
+      <div id="disasmPanel">
+        <div id="empty">
+          <p>Open an .obj file to see its disassembly.</p>
+          <p>You can also drop the file on this page.</p>
+        </div>
+        <table class="disasm"><tbody id="disasmBody"></tbody></table>
+      </div>
+    </section>
+    <section data-fold="memory">
+      <h2>Memory
+        <span class="memnav">
+          <input type="text" id="memAddr" value="x3000" aria-label="Memory address">
+          <button class="btn" id="memPrev" aria-label="Previous 64 words">&lsaquo;</button>
+          <button class="btn" id="memNext" aria-label="Next 64 words">&rsaquo;</button>
+          <label><input type="checkbox" id="memFollow" checked> Follow writes</label>
+        </span>
+      </h2>
+      <div class="body">
+        <div class="memwrap"><table class="mem"><tbody id="memBody"></tbody></table></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="col side">
+    <section data-fold="registers">
+      <h2>Registers <small id="stepCount">0 steps</small></h2>
+      <div class="body">
+        <div class="regs" id="regs"></div>
+        <div id="lastInstr">Last instruction: <b>none</b></div>
+      </div>
+    </section>
+
+
+    <section id="consoleSection" data-fold="console">
+      <h2>Console</h2>
+      <pre id="console"></pre>
+      <div id="inputRow">
+        <span id="inputLabel">Keyboard</span>
+        <input id="kbd" placeholder="Type here to send keys to the program" autocomplete="off" spellcheck="false">
+        <span id="bufLabel"></span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const TRAP_NAMES = {0x20:'GETC',0x21:'OUT',0x22:'PUTS',0x23:'IN',0x24:'PUTSP',0x25:'HALT'};
+const KBSR = 0xFE00, KBDR = 0xFE02;
+const MEM_ROWS = 8, MEM_COLS = 8;
+const RUN_BATCH = 50000;      // instructions per animation frame in Run mode
+const CONSOLE_MAX = 50000;    // keep the console text bounded
+
+let mem = new Uint16Array(65536);
+let reg = new Uint16Array(8);
+let pc = 0x3000;
+let cc = 'Z';
+let halted = false;
+let loaded = false;
+let running = false;
+let steps = 0;
+
+let origin = 0x3000;
+let programWords = [];        // original words as loaded, for reset + disassembly listing
+let breakpoints = new Set();
+let keyBuffer = [];           // characters typed by the user, not yet read by the program
+let waitingFor = null;        // name of the instruction that is blocked on input, or null
+
+// Per-render change tracking, used for highlights.
+let prevReg = new Uint16Array(8);
+let prevPc = 0x3000;
+let lastChanged = new Set();
+let lastWrite = null;
+let lastInstrText = null;
+
+let consoleText = '';
+let escBuf = null;            // partial ANSI escape sequence, or null
+let memBase = 0x3000;
+
+class NeedInput extends Error {}
+
+const $ = (id) => document.getElementById(id);
+function hex4(n) { return 'x' + (n & 0xFFFF).toString(16).toUpperCase().padStart(4, '0'); }
+function hex2(n) { return 'x' + (n & 0xFF).toString(16).toUpperCase().padStart(2, '0'); }
+
+let valueFormat = 'hex'; // 'hex' | 'dec' -- addresses always stay hex, this only affects register/memory contents
+function fmtVal(n) {
+  n = n & 0xFFFF;
+  if (valueFormat === 'hex') return hex4(n);
+  return String(n >= 0x8000 ? n - 0x10000 : n); // signed two's-complement decimal
+}
+function signExtend(x, bits) {
+  x = x & ((1 << bits) - 1);
+  if ((x >> (bits - 1)) & 1) x |= (0xFFFF << bits);
+  return x & 0xFFFF;
+}
+function bitsOf(word, hi, lo) { return (word >> lo) & ((1 << (hi - lo + 1)) - 1); }
+function charHint(word) {
+  if (word >= 0x20 && word < 0x7F) return `'${String.fromCharCode(word)}'`;
+  if (word === 0x0A) return `'\\n'`;
+  if (word === 0x1B) return `ESC`;
+  return '';
+}
+
+function disassemble(word, addr) {
+  const op = bitsOf(word, 15, 12);
+  const pcRelTarget = () => (addr + 1 + signExtend(word & 0x1FF, 9)) & 0xFFFF;
+  switch (op) {
+    case 0x0: {
+      const n = bitsOf(word,11,11), z = bitsOf(word,10,10), p = bitsOf(word,9,9);
+      const flags = (n?'n':'') + (z?'z':'') + (p?'p':'');
+      if (!flags) return 'NOP';
+      return `BR${flags} ${hex4(pcRelTarget())}`;
+    }
+    case 0x1: {
+      const dr = bitsOf(word,11,9), sr1 = bitsOf(word,8,6);
+      if (bitsOf(word,5,5)) return `ADD R${dr}, R${sr1}, #${(signExtend(word & 0x1F, 5) << 16) >> 16}`;
+      return `ADD R${dr}, R${sr1}, R${bitsOf(word,2,0)}`;
+    }
+    case 0x2: return `LD R${bitsOf(word,11,9)}, ${hex4(pcRelTarget())}`;
+    case 0x3: return `ST R${bitsOf(word,11,9)}, ${hex4(pcRelTarget())}`;
+    case 0x4: {
+      if (bitsOf(word,11,11)) {
+        const off = signExtend(word & 0x7FF, 11);
+        return `JSR ${hex4((addr + 1 + off) & 0xFFFF)}`;
+      }
+      return `JSRR R${bitsOf(word,8,6)}`;
+    }
+    case 0x5: {
+      const dr = bitsOf(word,11,9), sr1 = bitsOf(word,8,6);
+      if (bitsOf(word,5,5)) return `AND R${dr}, R${sr1}, #${(signExtend(word & 0x1F, 5) << 16) >> 16}`;
+      return `AND R${dr}, R${sr1}, R${bitsOf(word,2,0)}`;
+    }
+    case 0x6: return `LDR R${bitsOf(word,11,9)}, R${bitsOf(word,8,6)}, #${(signExtend(word & 0x3F, 6) << 16) >> 16}`;
+    case 0x7: return `STR R${bitsOf(word,11,9)}, R${bitsOf(word,8,6)}, #${(signExtend(word & 0x3F, 6) << 16) >> 16}`;
+    case 0x8: return 'RTI';
+    case 0x9: return `NOT R${bitsOf(word,11,9)}, R${bitsOf(word,8,6)}`;
+    case 0xA: return `LDI R${bitsOf(word,11,9)}, ${hex4(pcRelTarget())}`;
+    case 0xB: return `STI R${bitsOf(word,11,9)}, ${hex4(pcRelTarget())}`;
+    case 0xC: {
+      const baseR = bitsOf(word,8,6);
+      return baseR === 7 ? 'RET' : `JMP R${baseR}`;
+    }
+    case 0xD: return `.FILL ${hex4(word)}`;
+    case 0xE: return `LEA R${bitsOf(word,11,9)}, ${hex4(pcRelTarget())}`;
+    case 0xF: {
+      const tv = word & 0xFF;
+      const name = TRAP_NAMES[tv];
+      return name ? `TRAP ${hex2(tv)} (${name})` : `TRAP ${hex2(tv)}`;
+    }
+  }
+}
+
+// Build syntax-highlighted DOM nodes for a disassembled instruction.
+function asmNodes(text) {
+  const frag = document.createDocumentFragment();
+  const sp = text.indexOf(' ');
+  const opEl = document.createElement('span');
+  opEl.className = 'op';
+  opEl.textContent = sp < 0 ? text : text.slice(0, sp);
+  frag.appendChild(opEl);
+  if (sp < 0) return frag;
+  for (const tok of text.slice(sp + 1).split(/(R[0-7]|#-?\d+|x[0-9A-F]{2,4})/)) {
+    if (!tok) continue;
+    let cls = '';
+    if (/^R[0-7]$/.test(tok)) cls = 'r';
+    else if (tok[0] === '#') cls = 'imm';
+    else if (/^x[0-9A-F]{4}$/.test(tok)) cls = 'tgt';
+    if (cls) {
+      const s = document.createElement('span');
+      s.className = cls;
+      s.textContent = tok;
+      frag.appendChild(s);
+    } else {
+      frag.appendChild(document.createTextNode(tok));
+    }
+  }
+  return frag;
+}
+
+function setStatus(msg, isError) {
+  const el = $('status');
+  el.textContent = msg || '';
+  el.classList.toggle('error', !!isError);
+}
+
+// ---------- console output (with minimal ANSI handling) ----------
+
+function writeConsole(text) {
+  for (const ch of text) {
+    if (escBuf !== null) {
+      escBuf += ch;
+      // A CSI sequence ends with a byte in the range @..~ (after the '[').
+      if (escBuf.length > 1 && ch >= '@' && ch <= '~') {
+        if (/^\[[23]?J$/.test(escBuf)) consoleText = ''; // clear screen
+        escBuf = null;                                    // other sequences (colors, cursor) are ignored
+      } else if (escBuf.length > 16) {
+        escBuf = null;
+      }
+      continue;
+    }
+    if (ch === '\x1b') { escBuf = ''; continue; }
+    consoleText += ch;
+  }
+  if (consoleText.length > CONSOLE_MAX) consoleText = consoleText.slice(-CONSOLE_MAX);
+}
+
+// ---------- keyboard input ----------
+
+function hasKey() { return keyBuffer.length > 0; }
+function takeKey() { return keyBuffer.shift(); }
+function needInput(what) { waitingFor = what; throw new NeedInput(what); }
+
+function pushKey(code) {
+  keyBuffer.push(code);
+  if (waitingFor && loaded && !halted) {
+    waitingFor = null;
+    if (!running) {
+      // Complete the step that was blocked on input.
+      beginBatch();
+      execOne();
+      render();
+    }
+  } else {
+    render();
+  }
+}
+
+// ---------- memory access ----------
+
+function memRead(addr) {
+  if (addr === KBSR) {
+    // Like the Go VM, a KBSR read blocks until a key is available.
+    if (!hasKey()) needInput('KBSR read');
+    mem[KBSR] = 0x8000;
+    mem[KBDR] = takeKey();
+  }
+  return mem[addr];
+}
+function memWrite(addr, val) {
+  mem[addr] = val;
+  lastChanged.add(addr);
+  lastWrite = addr;
+}
+
+// ---------- loading ----------
+
+function openFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadImage(new Uint8Array(reader.result), file.name);
+  reader.readAsArrayBuffer(file);
+}
+
+function loadImage(bytes, name) {
+  stopRun();
+  setStatus('');
+  if (bytes.length < 2) {
+    setStatus(`${name} is too small to contain an origin word.`, true);
+    return;
+  }
+  let warn = '';
+  if (bytes.length % 2 !== 0) {
+    warn = `Odd file length (${bytes.length} bytes): the last byte was ignored. `;
+    bytes = bytes.subarray(0, bytes.length - 1);
+  }
+  const words = [];
+  for (let i = 0; i < bytes.length; i += 2) {
+    words.push((bytes[i] << 8) | bytes[i + 1]);
+  }
+  origin = words[0];
+  programWords = words.slice(1);
+  breakpoints = new Set();
+  $('fileName').textContent = name;
+  setStatus(warn + `${programWords.length} words loaded at ${hex4(origin)}`);
+  resetState();
+  loaded = true;
+  $('empty').hidden = true;
+  renderDisasmTable();
+  render();
+}
+
+function resetState() {
+  mem = new Uint16Array(65536);
+  reg = new Uint16Array(8);
+  for (let i = 0; i < programWords.length; i++) {
+    mem[(origin + i) & 0xFFFF] = programWords[i];
+  }
+  pc = origin;
+  cc = 'Z';
+  halted = false;
+  steps = 0;
+  keyBuffer = [];
+  waitingFor = null;
+  prevReg = new Uint16Array(8);
+  prevPc = pc;
+  lastChanged = new Set();
+  lastWrite = null;
+  lastInstrText = null;
+  consoleText = '';
+  escBuf = null;
+  memBase = origin & 0xFFF8;
+}
+
+// ---------- execution ----------
+
+function updateCC(val) {
+  val = val & 0xFFFF;
+  if (val === 0) cc = 'Z';
+  else if ((val >> 15) & 1) cc = 'N';
+  else cc = 'P';
+}
+
+// Start a new unit of work for highlighting (one Step, or one Run frame).
+function beginBatch() {
+  prevReg = reg.slice();
+  prevPc = pc;
+  lastChanged = new Set();
+}
+
+// Execute one instruction. Returns false if it is blocked on input
+// (the machine state is then left as it was before the instruction).
+function execOne() {
+  if (halted || !loaded) return false;
+  const savedPc = pc, savedR7 = reg[7], savedCc = cc;
+  try {
+    execInstr();
+    steps++;
+    return true;
+  } catch (e) {
+    if (!(e instanceof NeedInput)) throw e;
+    pc = savedPc; reg[7] = savedR7; cc = savedCc;
+    return false;
+  }
+}
+
+function execInstr() {
+  const instrAddr = pc;
+  const instr = mem[pc];
+  pc = (pc + 1) & 0xFFFF;
+  const op = bitsOf(instr, 15, 12);
+  lastInstrText = `${hex4(instrAddr)}  ${disassemble(instr, instrAddr)}`;
+
+  switch (op) {
+    case 0x0: { // BR
+      const n = bitsOf(instr,11,11), z = bitsOf(instr,10,10), p = bitsOf(instr,9,9);
+      const take = (cc === 'N' && n) || (cc === 'Z' && z) || (cc === 'P' && p);
+      if (take) pc = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF;
+      break;
+    }
+    case 0x1: { // ADD
+      const dr = bitsOf(instr,11,9), sr1 = bitsOf(instr,8,6);
+      const val = bitsOf(instr,5,5)
+        ? (reg[sr1] + signExtend(instr & 0x1F, 5)) & 0xFFFF
+        : (reg[sr1] + reg[bitsOf(instr,2,0)]) & 0xFFFF;
+      reg[dr] = val; updateCC(val);
+      break;
+    }
+    case 0x2: { // LD
+      const dr = bitsOf(instr,11,9);
+      const addr = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF;
+      reg[dr] = memRead(addr); updateCC(reg[dr]);
+      break;
+    }
+    case 0x3: { // ST
+      const addr = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF;
+      memWrite(addr, reg[bitsOf(instr,11,9)]);
+      break;
+    }
+    case 0x4: { // JSR/JSRR
+      const linkAddr = pc;
+      if (bitsOf(instr,11,11)) pc = (pc + signExtend(instr & 0x7FF, 11)) & 0xFFFF;
+      else pc = reg[bitsOf(instr,8,6)];
+      reg[7] = linkAddr;
+      break;
+    }
+    case 0x5: { // AND
+      const dr = bitsOf(instr,11,9), sr1 = bitsOf(instr,8,6);
+      const val = bitsOf(instr,5,5)
+        ? (reg[sr1] & signExtend(instr & 0x1F, 5)) & 0xFFFF
+        : (reg[sr1] & reg[bitsOf(instr,2,0)]) & 0xFFFF;
+      reg[dr] = val; updateCC(val);
+      break;
+    }
+    case 0x6: { // LDR
+      const dr = bitsOf(instr,11,9);
+      const addr = (reg[bitsOf(instr,8,6)] + signExtend(instr & 0x3F, 6)) & 0xFFFF;
+      reg[dr] = memRead(addr); updateCC(reg[dr]);
+      break;
+    }
+    case 0x7: { // STR
+      const addr = (reg[bitsOf(instr,8,6)] + signExtend(instr & 0x3F, 6)) & 0xFFFF;
+      memWrite(addr, reg[bitsOf(instr,11,9)]);
+      break;
+    }
+    case 0x8: break; // RTI - not implemented
+    case 0x9: { // NOT
+      const dr = bitsOf(instr,11,9);
+      reg[dr] = (~reg[bitsOf(instr,8,6)]) & 0xFFFF; updateCC(reg[dr]);
+      break;
+    }
+    case 0xA: { // LDI
+      const dr = bitsOf(instr,11,9);
+      const addr1 = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF;
+      reg[dr] = memRead(memRead(addr1)); updateCC(reg[dr]);
+      break;
+    }
+    case 0xB: { // STI
+      const addr1 = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF;
+      memWrite(memRead(addr1), reg[bitsOf(instr,11,9)]);
+      break;
+    }
+    case 0xC: pc = reg[bitsOf(instr,8,6)]; break; // JMP/RET
+    case 0xD: break; // reserved
+    case 0xE: { // LEA
+      const dr = bitsOf(instr,11,9);
+      reg[dr] = (pc + signExtend(instr & 0x1FF, 9)) & 0xFFFF; updateCC(reg[dr]);
+      break;
+    }
+    case 0xF: { // TRAP
+      reg[7] = pc;
+      const tv = instr & 0xFF;
+      if (tv === 0x20) { // GETC: read one char, no echo
+        if (!hasKey()) needInput('GETC');
+        reg[0] = takeKey(); updateCC(reg[0]);
+      } else if (tv === 0x21) { // OUT
+        writeConsole(String.fromCharCode(reg[0] & 0xFF));
+      } else if (tv === 0x22) { // PUTS
+        let a = reg[0], s = '';
+        while (mem[a] !== 0) { s += String.fromCharCode(mem[a] & 0xFF); a = (a + 1) & 0xFFFF; }
+        writeConsole(s);
+      } else if (tv === 0x23) { // IN: prompt, read one char, echo
+        if (!hasKey()) needInput('IN');
+        reg[0] = takeKey(); updateCC(reg[0]);
+        writeConsole('Enter a character: ' + String.fromCharCode(reg[0]) + '\n');
+      } else if (tv === 0x24) { // PUTSP
+        let a = reg[0], s = '';
+        while (mem[a] !== 0) {
+          const w = mem[a];
+          s += String.fromCharCode(w & 0xFF);
+          const hi = (w >> 8) & 0xFF;
+          if (hi) s += String.fromCharCode(hi);
+          a = (a + 1) & 0xFFFF;
+        }
+        writeConsole(s);
+      } else if (tv === 0x25) { // HALT
+        halted = true;
+        writeConsole('\n[HALT]\n');
+      }
+      break;
+    }
+  }
+}
+
+function stepClicked() {
+  if (running || halted || !loaded) return;
+  beginBatch();
+  execOne();
+  render();
+}
+
+function startRun() {
+  if (!loaded || halted || running) return;
+  running = true;
+  setStatus('');
+  let first = true; // do not stop on the breakpoint we are resuming from
+  const frame = () => {
+    if (!running) return;
+    beginBatch();
+    for (let i = 0; i < RUN_BATCH; i++) {
+      if (halted || waitingFor) break;
+      if (!first && breakpoints.has(pc)) {
+        stopRun();
+        setStatus(`Stopped at breakpoint ${hex4(pc)}`);
+        break;
+      }
+      first = false;
+      if (!execOne()) { first = true; break; } // blocked on input: retry this instruction later
+    }
+    if (halted) stopRun();
+    render();
+    if (running) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  render();
+}
+
+function stopRun() {
+  running = false;
+}
+
+// ---------- rendering ----------
+
+function renderDisasmTable() {
+  const body = $('disasmBody');
+  body.innerHTML = '';
+  for (let i = 0; i < programWords.length; i++) {
+    const addr = (origin + i) & 0xFFFF;
+    const tr = document.createElement('tr');
+    tr.id = 'dis-' + addr;
+    tr.dataset.addr = addr;
+    for (const cls of ['gutter', 'addr', 'hex', 'asm', 'comment']) {
+      const td = document.createElement('td');
+      td.className = cls;
+      tr.appendChild(td);
+    }
+    fillDisasmRow(tr, addr);
+    body.appendChild(tr);
+  }
+}
+
+function fillDisasmRow(tr, addr) {
+  const word = mem[addr];
+  const hint = charHint(word);
+  tr.cells[1].textContent = hex4(addr);
+  tr.cells[2].textContent = hex4(word);
+  tr.cells[3].replaceChildren(asmNodes(disassemble(word, addr)));
+  tr.cells[4].textContent = hint ? '; ' + hint : '';
+  tr.classList.toggle('bp', breakpoints.has(addr));
+  tr.classList.toggle('row-changed', word !== programWords[(addr - origin) & 0xFFFF]);
+  tr.classList.toggle('data', word < 0x0200); // BR with no n/z/p flags: almost always data, not code
+}
+
+function inProgram(addr) {
+  return ((addr - origin) & 0xFFFF) < programWords.length;
+}
+
+// Registers are built once; render() only updates text and classes.
+const regRows = [];
+function initRegs() {
+  const box = $('regs');
+  const addRow = (label, cls) => {
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = label;
+    const bits = document.createElement('span');
+    bits.className = 'bits';
+    const cells = [];
+    for (let b = 15; b >= 0; b--) {
+      const c = document.createElement('i');
+      c.title = 'bit ' + b;
+      bits.appendChild(c);
+      cells.push(c);
+    }
+    const val = document.createElement('span');
+    val.className = 'val';
+    for (const el of [name, bits, val]) { if (cls) el.classList.add(cls); box.appendChild(el); }
+    return { name, cells, val };
+  };
+  for (let i = 0; i < 8; i++) regRows.push(addRow('R' + i));
+  const sep = document.createElement('div');
+  sep.className = 'sep';
+  box.appendChild(sep);
+  regRows.push(addRow('PC', 'pcrow'));
+
+  const ccName = document.createElement('span');
+  ccName.className = 'name';
+  ccName.textContent = 'CC';
+  const flags = document.createElement('span');
+  flags.className = 'flags';
+  for (const f of ['N', 'Z', 'P']) {
+    const l = document.createElement('span');
+    l.className = 'lamp';
+    l.id = 'cc' + f;
+    l.textContent = f;
+    l.title = { N: 'negative', Z: 'zero', P: 'positive' }[f];
+    flags.appendChild(l);
+  }
+  box.append(ccName, flags, document.createElement('span'));
+}
+
+function renderReg(row, value, prev, isAddr) {
+  const diff = value ^ prev;
+  for (let k = 0; k < 16; k++) {
+    const bit = 15 - k;
+    row.cells[k].classList.toggle('on', ((value >> bit) & 1) === 1);
+    row.cells[k].classList.toggle('flip', ((diff >> bit) & 1) === 1);
+  }
+  row.val.textContent = isAddr ? hex4(value) : fmtVal(value);
+  row.name.classList.toggle('changed', diff !== 0);
+  row.val.classList.toggle('changed', diff !== 0);
+}
+
+function render() {
+  for (let i = 0; i < 8; i++) renderReg(regRows[i], reg[i], prevReg[i], false);
+  // PC always moves, so only mark the bits, not the whole row.
+  renderReg(regRows[8], pc, prevPc, true);
+  regRows[8].name.classList.remove('changed');
+  regRows[8].val.classList.remove('changed');
+  for (const f of ['N', 'Z', 'P']) $('cc' + f).classList.toggle('on', cc === f);
+
+  $('stepCount').textContent = `${steps.toLocaleString()} ${steps === 1 ? 'step' : 'steps'}`;
+  const last = $('lastInstr');
+  last.replaceChildren('Last instruction: ');
+  const b = document.createElement('b');
+  b.textContent = lastInstrText || 'none';
+  last.appendChild(b);
+
+  let state = '', label = '';
+  if (halted) { state = 'halted'; label = 'Halted'; }
+  else if (waitingFor) { state = 'waiting'; label = 'Waiting for a key'; }
+  else if (running) { state = 'running'; label = 'Running'; }
+  if (loaded && !halted && !inProgram(pc)) {
+    label = (label ? label + ', ' : '') + `PC ${hex4(pc)} is outside the program`;
+    state = state || 'waiting';
+  }
+  $('state').textContent = label;
+  $('state').dataset.state = state;
+
+  $('runBtn').firstChild.textContent = running ? 'Pause' : 'Run';
+  $('stepBtn').disabled = !loaded || running || halted;
+  $('runBtn').disabled = !loaded || halted;
+  $('resetBtn').disabled = !loaded;
+
+  // disassembly: refresh rows whose memory changed (self-modifying code / data),
+  // then highlight the current PC row
+  for (const addr of lastChanged) {
+    if (inProgram(addr)) fillDisasmRow($('dis-' + addr), addr);
+  }
+  document.querySelectorAll('.row-pc').forEach(el => el.classList.remove('row-pc'));
+  const pcRow = $('dis-' + pc);
+  if (pcRow) {
+    pcRow.classList.add('row-pc');
+    pcRow.scrollIntoView({ block: 'nearest' });
+  }
+
+  renderMemory();
+
+  // console
+  const con = $('console');
+  con.textContent = consoleText;
+  con.scrollTop = con.scrollHeight;
+
+  // input: unfold the console when the program needs a key, so the input box is visible
+  if (waitingFor && !wasWaiting) setFolded($('consoleSection'), false);
+  wasWaiting = !!waitingFor;
+  $('inputRow').classList.toggle('waiting', !!waitingFor);
+  $('inputLabel').textContent = waitingFor ? `${waitingFor} needs a key` : 'Keyboard';
+  $('bufLabel').textContent =
+    keyBuffer.length ? `${keyBuffer.length} ${keyBuffer.length === 1 ? 'key' : 'keys'} queued` : '';
+  if (waitingFor && document.activeElement !== $('kbd')) $('kbd').focus();
+}
+
+function renderMemory() {
+  if ($('memFollow').checked && lastWrite !== null && lastChanged.has(lastWrite)) {
+    const span = MEM_ROWS * MEM_COLS;
+    if (((lastWrite - memBase) & 0xFFFF) >= span) memBase = lastWrite & 0xFFF8;
+  }
+  const addrInput = $('memAddr');
+  if (document.activeElement !== addrInput) addrInput.value = hex4(memBase);
+
+  const body = $('memBody');
+  body.innerHTML = '';
+  for (let r = 0; r < MEM_ROWS; r++) {
+    const tr = document.createElement('tr');
+    const rowAddr = (memBase + r * MEM_COLS) & 0xFFFF;
+    const a = document.createElement('td');
+    a.className = 'addr';
+    a.textContent = hex4(rowAddr);
+    tr.appendChild(a);
+    for (let c = 0; c < MEM_COLS; c++) {
+      const addr = (rowAddr + c) & 0xFFFF;
+      const td = document.createElement('td');
+      td.textContent = fmtVal(mem[addr]);
+      td.title = `${hex4(addr)} = ${hex4(mem[addr])} ${charHint(mem[addr])}`;
+      if (mem[addr] === 0) td.classList.add('zero');
+      if (lastChanged.has(addr)) td.classList.add('changed');
+      if (addr === pc) td.classList.add('pc');
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
+function parseAddr(s) {
+  s = s.trim().toLowerCase();
+  if (s.startsWith('0x')) s = s.slice(2);
+  else if (s.startsWith('x')) s = s.slice(1);
+  const n = parseInt(s, 16);
+  return Number.isNaN(n) ? null : n & 0xFFFF;
+}
+
+// ---------- event wiring ----------
+
+$('fileInput').addEventListener('change', (ev) => openFile(ev.target.files[0]));
+$('openBtn').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); $('fileInput').click(); }
+});
+
+// Drop a file anywhere on the page to load it.
+document.addEventListener('dragover', (ev) => { ev.preventDefault(); document.body.classList.add('dragging'); });
+document.addEventListener('dragleave', (ev) => { if (!ev.relatedTarget) document.body.classList.remove('dragging'); });
+document.addEventListener('drop', (ev) => {
+  ev.preventDefault();
+  document.body.classList.remove('dragging');
+  openFile(ev.dataTransfer.files[0]);
+});
+
+$('fmtToggle').addEventListener('click', () => {
+  valueFormat = valueFormat === 'hex' ? 'dec' : 'hex';
+  $('fmtToggle').textContent = valueFormat === 'hex' ? 'Hex' : 'Decimal';
+  render();
+});
+$('stepBtn').addEventListener('click', stepClicked);
+$('runBtn').addEventListener('click', () => {
+  if (running) { stopRun(); setStatus(`Paused at ${hex4(pc)}`); render(); }
+  else startRun();
+});
+$('resetBtn').addEventListener('click', () => {
+  stopRun();
+  resetState();
+  renderDisasmTable();
+  render();
+  setStatus(`Reset to ${hex4(origin)}`);
+});
+
+$('disasmBody').addEventListener('click', (ev) => {
+  const tr = ev.target.closest('tr');
+  if (!tr) return;
+  const addr = Number(tr.dataset.addr);
+  if (breakpoints.has(addr)) breakpoints.delete(addr); else breakpoints.add(addr);
+  tr.classList.toggle('bp', breakpoints.has(addr));
+});
+
+$('memAddr').addEventListener('change', (ev) => {
+  const a = parseAddr(ev.target.value);
+  if (a === null) return;
+  memBase = a;
+  $('memFollow').checked = false;
+  renderMemory();
+});
+$('memPrev').addEventListener('click', () => {
+  memBase = (memBase - MEM_ROWS * MEM_COLS) & 0xFFFF;
+  $('memFollow').checked = false;
+  renderMemory();
+});
+$('memNext').addEventListener('click', () => {
+  memBase = (memBase + MEM_ROWS * MEM_COLS) & 0xFFFF;
+  $('memFollow').checked = false;
+  renderMemory();
+});
+
+// Keys typed in the input box go to the program, one key per character.
+$('kbd').addEventListener('keydown', (ev) => {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  let code = null;
+  if (ev.key === 'Enter') code = 10;
+  else if (ev.key === 'Backspace') code = 8;
+  else if (ev.key === 'Escape') code = 27;
+  else if (ev.key.length === 1) code = ev.key.charCodeAt(0);
+  if (code === null) return;
+  ev.preventDefault();
+  pushKey(code);
+});
+
+// Keyboard shortcuts when focus is not in a text field.
+document.addEventListener('keydown', (ev) => {
+  if (ev.target.tagName === 'INPUT' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.key === 's') { ev.preventDefault(); stepClicked(); }
+  else if (ev.key === 'r') { ev.preventDefault(); $('runBtn').click(); }
+});
+
+// ---------- collapsible panels ----------
+
+let wasWaiting = false;
+const FOLD_KEY = 'lc3-folded';
+function loadFolded() {
+  try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY)) || []); } catch { return new Set(); }
+}
+function setFolded(section, folded) {
+  section.classList.toggle('collapsed', folded);
+  section.querySelector('.fold').setAttribute('aria-expanded', String(!folded));
+  const all = [...document.querySelectorAll('section.collapsed')].map(el => el.dataset.fold);
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(all)); } catch {}
+}
+function initFolds() {
+  const folded = loadFolded();
+  for (const section of document.querySelectorAll('section[data-fold]')) {
+    // Turn the panel title (the first text in the heading) into the fold button.
+    const h2 = section.querySelector('h2');
+    const title = h2.firstChild;
+    const btn = document.createElement('button');
+    btn.className = 'fold';
+    btn.textContent = title.textContent.trim();
+    btn.title = 'Show or hide this panel';
+    btn.addEventListener('click', () => setFolded(section, !section.classList.contains('collapsed')));
+    h2.replaceChild(btn, title);
+    setFolded(section, folded.has(section.dataset.fold));
+  }
+}
+
+initFolds();
+initRegs();
+render();
+</script>
+</body>
+</html>
