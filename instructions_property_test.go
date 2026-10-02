@@ -1,11 +1,21 @@
 package main
 
 import (
+	"io"
+	"log/slog"
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"hegel.dev/go/hegel"
 )
+
+// trapHalt logs at Info level, which would print once per generated case.
+func TestMain(m *testing.M) {
+	slog.SetLogLoggerLevel(slog.LevelWarn)
+	os.Exit(m.Run())
+}
 
 // CI environments derandomize by default. To catch test failures,
 // increase number of test cases per run.
@@ -459,5 +469,232 @@ func TestPropertyRtiAndRes(t *testing.T) {
 		// Property 1: the unused opcodes change no register and no memory cell
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers)
 		assertMemory(ht, beforeMemory, vm.Memory)
+	}, propertyOpts...)
+}
+
+// The trap handlers read os.Stdin and write os.Stdout on every call, so a test
+// can put temp files in their place for the duration of one call. Temp files,
+// not pipes, so a long write can never block on a full buffer. hegel runs the
+// cases one at a time, so these tests must not call t.Parallel.
+func withStdio(ht *hegel.T, input []byte, fn func()) string {
+	dir := ht.TempDir()
+	in, err := os.CreateTemp(dir, "stdin")
+	if err != nil {
+		ht.Fatalf("create stdin: %v", err)
+	}
+	defer in.Close()
+	out, err := os.CreateTemp(dir, "stdout")
+	if err != nil {
+		ht.Fatalf("create stdout: %v", err)
+	}
+	defer out.Close()
+	in.Write(input)
+	in.Seek(0, io.SeekStart)
+
+	oldIn, oldOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = in, out
+	func() {
+		defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+		fn()
+	}()
+
+	out.Seek(0, io.SeekStart)
+	printed, _ := io.ReadAll(out)
+	return string(printed)
+}
+
+func trapInstr(vector uint16) uint16 { return uint16(OpTrap)<<12 | vector&0xFF }
+
+// ASCII text with no NUL, since x0000 terminates a string in memory.
+func genASCII(minLen, maxLen int) hegel.Generator[[]byte] {
+	return hegel.Lists(hegel.Integers[byte](0x01, 0x7F)).MinSize(minLen).MaxSize(maxLen)
+}
+
+// placeString picks a start address so that the string and its terminator
+// neither wrap past xFFFF nor cover MmapKBSR, which PUTS would read.
+func placeString(ht *hegel.T, words int) uint16 {
+	start := hegel.Draw(ht, genWord)
+	end := int(start) + words // address of the terminator
+	ht.Assume(end <= 0xFFFF)
+	ht.Assume(end < MmapKBSR || int(start) > MmapKBSR)
+	return start
+}
+
+func TestPropertyTrapUnknownVector(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		vector := hegel.Draw(ht, hegel.Filter(hegel.Integers[uint16](0, 0xFF),
+			func(v uint16) bool { return v < TrapGetC || v > TrapHalt }))
+
+		before := slices.Clone(vm.Registers)
+		printed := withStdio(ht, nil, func() { vm.trap(trapInstr(vector)) })
+
+		// Property 1: R7 holds the return address
+		if got := vm.Registers[R7]; got != before[PC] {
+			ht.Fatalf("R7 %#04x, want old PC %#04x", got, before[PC])
+		}
+		// Property 2: no other register is modified
+		assertOnlyChanged(ht, before, vm.Registers, R7)
+		// Property 3: an unimplemented vector prints nothing and keeps the VM running
+		if printed != "" || vm.Executing != Running {
+			ht.Fatalf("vector %#02x printed %q, executing=%v", vector, printed, vm.Executing)
+		}
+	}, propertyOpts...)
+}
+
+func TestPropertyTrapPuts(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		text := hegel.Draw(ht, genASCII(0, 40))
+		start := placeString(ht, len(text))
+		for i, c := range text {
+			vm.Memory[start+uint16(i)] = uint16(c)
+		}
+		vm.Memory[start+uint16(len(text))] = 0
+		vm.Registers[R0] = start
+
+		before := slices.Clone(vm.Registers)
+		beforeMemory := slices.Clone(vm.Memory)
+		printed := withStdio(ht, nil, func() { vm.trap(trapInstr(TrapPutS)) })
+
+		// Property 1: every word up to the terminator is printed as one character
+		if printed != string(text) {
+			ht.Fatalf("PUTS at %#04x printed %q, want %q", start, printed, text)
+		}
+		// Property 2: only the return address register is modified
+		assertOnlyChanged(ht, before, vm.Registers, R7)
+		// Property 3: printing never writes to memory
+		assertMemory(ht, beforeMemory, vm.Memory)
+	}, propertyOpts...)
+}
+
+// Metamorphic: PUTSP on a packed string prints the same text as PUTS on the
+// same string with one character per word.
+func TestPropertyTrapPutsp(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		text := hegel.Draw(ht, genASCII(0, 40))
+		words := (len(text) + 1) / 2
+		start := placeString(ht, words)
+		for i := range words {
+			vm.Memory[start+uint16(i)] = 0
+		}
+		for i, c := range text {
+			vm.Memory[start+uint16(i/2)] |= uint16(c) << (8 * (i % 2))
+		}
+		vm.Memory[start+uint16(words)] = 0
+		vm.Registers[R0] = start
+
+		printed := withStdio(ht, nil, func() { vm.trap(trapInstr(TrapPutSP)) })
+
+		// Property 1: the low byte of each word is printed first, then the high byte
+		if printed != string(text) {
+			ht.Fatalf("PUTSP at %#04x printed %q, want %q", start, printed, text)
+		}
+	}, propertyOpts...)
+}
+
+func TestPropertyTrapOut(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		r0 := vm.Registers[R0]
+
+		before := slices.Clone(vm.Registers)
+		printed := withStdio(ht, nil, func() { vm.trap(trapInstr(TrapOut)) })
+
+		// Property 1: OUT writes the low byte of R0, and nothing else
+		if want := string([]byte{byte(r0)}); printed != want {
+			ht.Fatalf("OUT with R0=%#04x printed %q, want %q", r0, printed, want)
+		}
+		// Property 2: only the return address register is modified
+		assertOnlyChanged(ht, before, vm.Registers, R7)
+	}, propertyOpts...)
+}
+
+func TestPropertyTrapGetc(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		input := hegel.Draw(ht, genASCII(1, 20))
+
+		before := slices.Clone(vm.Registers)
+		printed := withStdio(ht, input, func() { vm.trap(trapInstr(TrapGetC)) })
+
+		// Property 1: R0 holds the first character of the input
+		if got := vm.Registers[R0]; got != uint16(input[0]) {
+			ht.Fatalf("GETC with input %q: R0 %#04x, want %#04x", input, got, input[0])
+		}
+		// Property 2: Conditional Flag is set as per the character
+		if got := vm.Registers[RCond]; got != wantCC(uint16(input[0])) {
+			ht.Fatalf("CC for %#04x: got %03b, want %03b", input[0], got, wantCC(uint16(input[0])))
+		}
+		// Property 3: no register apart from R0, R7 and the flag is modified
+		assertOnlyChanged(ht, before, vm.Registers, R0, R7, RCond)
+		// Property 4: GETC does not echo the character
+		if printed != "" {
+			ht.Fatalf("GETC printed %q, want nothing", printed)
+		}
+	}, propertyOpts...)
+}
+
+// Two GETC calls must consume two consecutive characters of the input.
+func TestPropertyTrapGetcTwice(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		input := hegel.Draw(ht, genASCII(2, 20))
+
+		var first, second uint16
+		withStdio(ht, input, func() {
+			vm.trap(trapInstr(TrapGetC))
+			first = vm.Registers[R0]
+			vm.trap(trapInstr(TrapGetC))
+			second = vm.Registers[R0]
+		})
+
+		// Property 1: the second call reads the character after the first one
+		if first != uint16(input[0]) || second != uint16(input[1]) {
+			ht.Fatalf("GETC twice with input %q: got %#02x %#02x, want %#02x %#02x",
+				input, first, second, input[0], input[1])
+		}
+	}, propertyOpts...)
+}
+
+func TestPropertyTrapIn(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+		input := hegel.Draw(ht, genASCII(1, 20))
+
+		before := slices.Clone(vm.Registers)
+		printed := withStdio(ht, input, func() { vm.trap(trapInstr(TrapIn)) })
+
+		// Property 1: R0 holds the first character of the input
+		if got := vm.Registers[R0]; got != uint16(input[0]) {
+			ht.Fatalf("IN with input %q: R0 %#04x, want %#04x", input, got, input[0])
+		}
+		// Property 2: Conditional Flag is set as per the character
+		if got := vm.Registers[RCond]; got != wantCC(uint16(input[0])) {
+			ht.Fatalf("CC for %#04x: got %03b, want %03b", input[0], got, wantCC(uint16(input[0])))
+		}
+		// Property 3: no register apart from R0, R7 and the flag is modified
+		assertOnlyChanged(ht, before, vm.Registers, R0, R7, RCond)
+		// Property 4: IN prompts first, then echoes the character it read
+		if !strings.HasSuffix(printed, string(rune(input[0]))) {
+			ht.Fatalf("IN printed %q, want it to end with %q", printed, input[0])
+		}
+	}, propertyOpts...)
+}
+
+func TestPropertyTrapHalt(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		vm := hegel.Draw(ht, genVM)
+
+		before := slices.Clone(vm.Registers)
+		withStdio(ht, nil, func() { vm.trap(trapInstr(TrapHalt)) })
+
+		// Property 1: the VM stops
+		if vm.Executing != Halted {
+			ht.Fatal("HALT did not stop the VM")
+		}
+		// Property 2: only the return address register is modified
+		assertOnlyChanged(ht, before, vm.Registers, R7)
 	}, propertyOpts...)
 }

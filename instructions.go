@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
@@ -153,23 +152,22 @@ func (vm *VM) trap(instr uint16) {
 
 func (vm *VM) trapGetC() {
 	slog.Debug("processing Trap GETC instruction")
-	reader := bufio.NewReader(os.Stdin)
-	inputChar, _, _ := reader.ReadRune()
-	fmt.Printf("%c", inputChar)
-	vm.Registers[R0] = uint16(inputChar)
+	inputChar := make([]byte, 1)
+	_, _ = os.Stdin.Read(inputChar[:])
+	vm.Registers[R0] = uint16(inputChar[0])
 	updateConditionFlags(vm.Registers, uint16(R0))
 }
 
 func (vm *VM) trapOut() {
 	slog.Debug("processing Trap OUT instruction")
-	fmt.Printf("%c", rune(vm.Registers[R0]))
+	os.Stdout.Write([]byte{byte(vm.Registers[R0])})
 }
 
 func (vm *VM) trapPutS() {
 	slog.Debug("processing Trap PUTS instruction")
 	addr := vm.Registers[R0]
 	for memRead(vm.Memory, addr) != 0 {
-		fmt.Printf("%c", rune(memRead(vm.Memory, addr)))
+		os.Stdout.Write([]byte{byte(memRead(vm.Memory, addr))})
 		addr++
 	}
 }
@@ -177,10 +175,10 @@ func (vm *VM) trapPutS() {
 func (vm *VM) trapIn() {
 	slog.Debug("processing Trap IN instruction")
 	fmt.Printf("Enter a character: ")
-	reader := bufio.NewReader(os.Stdin)
-	inputChar, _, _ := reader.ReadRune()
-	fmt.Print(string(inputChar))
-	vm.Registers[R0] = uint16(inputChar)
+	inputChar := make([]byte, 1)
+	_, _ = os.Stdin.Read(inputChar[:])
+	os.Stdout.Write(inputChar)
+	vm.Registers[R0] = uint16(inputChar[0])
 	updateConditionFlags(vm.Registers, uint16(R0))
 }
 
@@ -189,7 +187,10 @@ func (vm *VM) trapPutSP() {
 	addr := vm.Registers[R0]
 	for memRead(vm.Memory, addr) != 0x0000 {
 		memoryContents := memRead(vm.Memory, addr)
-		fmt.Print(memoryContents&0xFF, memoryContents>>8)
+		os.Stdout.Write([]byte{byte(memoryContents)})
+		if memoryContents>>8 != 0x00 {
+			os.Stdout.Write([]byte{byte(memoryContents >> 8)})
+		}
 		addr++
 	}
 }
