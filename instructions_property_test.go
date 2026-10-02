@@ -7,6 +7,10 @@ import (
 	"hegel.dev/go/hegel"
 )
 
+// CI environments derandomize by default. To catch test failures,
+// increase number of test cases per run.
+var propertyOpts = []hegel.Option{hegel.WithTestCases(300)}
+
 var genRegIndex = hegel.Integers[uint16](0, 7)
 
 var genWord = hegel.Integers[uint16](0, 0xFFFF)
@@ -105,7 +109,7 @@ func TestPropertyAdd(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, Register(dr), RCond)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyAnd(t *testing.T) {
@@ -141,7 +145,7 @@ func TestPropertyAnd(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, Register(dr), RCond)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyNot(t *testing.T) {
@@ -165,7 +169,7 @@ func TestPropertyNot(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, Register(dr), RCond)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyBr(t *testing.T) {
@@ -193,7 +197,7 @@ func TestPropertyBr(t *testing.T) {
 		}
 		// Property 2: no other register is modified, not even the condition code
 		assertOnlyChanged(ht, before, vm.Registers, PC)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyJmp(t *testing.T) {
@@ -211,7 +215,7 @@ func TestPropertyJmp(t *testing.T) {
 		}
 		// Property 2: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, PC)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyJsr(t *testing.T) {
@@ -233,7 +237,7 @@ func TestPropertyJsr(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, PC, R7)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyJsrr(t *testing.T) {
@@ -256,7 +260,7 @@ func TestPropertyJsrr(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, PC, R7)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyLd(t *testing.T) {
@@ -286,7 +290,7 @@ func TestPropertyLd(t *testing.T) {
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers, Register(dr), RCond)
 		// Property 4: a load never writes to memory
 		assertMemory(ht, beforeMemory, vm.Memory)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyLdi(t *testing.T) {
@@ -319,7 +323,7 @@ func TestPropertyLdi(t *testing.T) {
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers, Register(dr), RCond)
 		// Property 4: a load never writes to memory
 		assertMemory(ht, beforeMemory, vm.Memory)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyLdr(t *testing.T) {
@@ -351,7 +355,7 @@ func TestPropertyLdr(t *testing.T) {
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers, Register(dr), RCond)
 		// Property 4: a load never writes to memory
 		assertMemory(ht, beforeMemory, vm.Memory)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyLea(t *testing.T) {
@@ -375,7 +379,7 @@ func TestPropertyLea(t *testing.T) {
 		}
 		// Property 3: no other register is modified
 		assertOnlyChanged(ht, before, vm.Registers, Register(dr), RCond)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertySt(t *testing.T) {
@@ -395,7 +399,7 @@ func TestPropertySt(t *testing.T) {
 		assertMemory(ht, wantMemory, vm.Memory)
 		// Property 2: a store modifies no register, not even the condition code
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertySti(t *testing.T) {
@@ -417,7 +421,7 @@ func TestPropertySti(t *testing.T) {
 		assertMemory(ht, wantMemory, vm.Memory)
 		// Property 2: a store modifies no register, not even the condition code
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyStr(t *testing.T) {
@@ -438,7 +442,7 @@ func TestPropertyStr(t *testing.T) {
 		assertMemory(ht, wantMemory, vm.Memory)
 		// Property 2: a store modifies no register, not even the condition code
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers)
-	})
+	}, propertyOpts...)
 }
 
 func TestPropertyRtiAndRes(t *testing.T) {
@@ -455,5 +459,5 @@ func TestPropertyRtiAndRes(t *testing.T) {
 		// Property 1: the unused opcodes change no register and no memory cell
 		assertOnlyChanged(ht, beforeRegisters, vm.Registers)
 		assertMemory(ht, beforeMemory, vm.Memory)
-	})
+	}, propertyOpts...)
 }
