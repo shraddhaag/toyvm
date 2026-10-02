@@ -65,7 +65,7 @@ func (vm *VM) jmp(instr uint16) {
 
 func (vm *VM) jsr(instr uint16) {
 	slog.Debug("processing JSR instruction")
-	vm.Registers[R7] = vm.Registers[PC]
+	pc := vm.Registers[PC]
 	bit11 := (instr >> 11) & 0x1
 	if bit11 == 0 {
 		// JSRR: Jump to Subroutine Register
@@ -74,6 +74,7 @@ func (vm *VM) jsr(instr uint16) {
 		// JSR: Jump to Subroutine
 		vm.Registers[PC] += signExtend(instr&0x7FF, 11)
 	}
+	vm.Registers[R7] = pc
 }
 
 func (vm *VM) ld(instr uint16) {
