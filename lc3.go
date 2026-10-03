@@ -6,9 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
-
-	"atomicgo.dev/keyboard"
-	"atomicgo.dev/keyboard/keys"
+	"os/signal"
+	"syscall"
 )
 
 func updateConditionFlags(registers []uint16, result uint16) {
@@ -21,37 +20,20 @@ func updateConditionFlags(registers []uint16, result uint16) {
 	}
 }
 
-func getInputFromKeyBoard() uint16 {
-	var keyPresssed uint16
-	keyboard.Listen(func(key keys.Key) (stop bool, err error) {
-		switch key.Code {
-		case keys.CtrlC, keys.Esc:
-			slog.Info("halting")
-			os.Exit(1)
-		default:
-			keyPresssed = uint16(key.Runes[0])
-			return true, nil
-		}
-		return true, nil
-	})
-	return keyPresssed
+func (vm *VM) memWrite(address uint16, val uint16) {
+	vm.Memory[address] = val
 }
 
-func memWrite(memory []uint16, address uint16, val uint16) {
-	memory[address] = val
-}
-
-func memRead(memory []uint16, address uint16) uint16 {
+func (vm *VM) memRead(address uint16) uint16 {
 	if address == MmapKBSR {
-		key := getInputFromKeyBoard()
-		if key != 0 {
-			memWrite(memory, MmapKBSR, 1<<15)
-			memWrite(memory, MmapKBDR, key)
+		if key := vm.readByte(); key != 0 {
+			vm.memWrite(MmapKBSR, 1<<15)
+			vm.memWrite(MmapKBDR, uint16(key))
 		} else {
-			memWrite(memory, MmapKBSR, 0)
+			vm.memWrite(MmapKBSR, 0)
 		}
 	}
-	return memory[address]
+	return vm.Memory[address]
 }
 
 func signExtend(x uint16, bitCount int) uint16 {
@@ -79,6 +61,21 @@ func main() {
 		return
 	}
 
+	if err := vm.setRawTerminal(); err != nil {
+		slog.Debug("terminal stays in line mode", slog.Any("error", err))
+	}
+	defer vm.restoreTerminal()
+
+	// A signal skips deferred calls, so put the terminal back by hand before
+	// the process goes away; otherwise the shell is left with no echo.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signals
+		vm.restoreTerminal()
+		os.Exit(1)
+	}()
+
 	slog.Info("setup done")
 
 	// since exactly one condition flag should be set at any given time,
@@ -92,7 +89,7 @@ func main() {
 
 	for vm.Executing == Running {
 		// fetch instruction and operation
-		instr := memRead(vm.Memory, vm.Registers[PC])
+		instr := vm.memRead(vm.Registers[PC])
 		vm.Registers[PC]++
 		op := instr >> 12
 		slog.Debug("start processing instruction", "instruction", instr)

@@ -1,5 +1,7 @@
 package main
 
+import "github.com/containerd/console"
+
 // LC3 OP codes
 const (
 	OpBr   = iota // branch
@@ -72,4 +74,5 @@ type VM struct {
 	Memory    []uint16
 	Registers []uint16
 	Executing ExecutionState
+	Terminal  console.Console
 }

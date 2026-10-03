@@ -80,7 +80,7 @@ func (vm *VM) ld(instr uint16) {
 	slog.Debug("processing LD instruction")
 	r0 := (instr >> 9) & 0x7
 	offset := signExtend(instr&0x1FF, 9)
-	vm.Registers[r0] = memRead(vm.Memory, vm.Registers[PC]+offset)
+	vm.Registers[r0] = vm.memRead(vm.Registers[PC] + offset)
 	updateConditionFlags(vm.Registers, r0)
 }
 
@@ -88,7 +88,7 @@ func (vm *VM) ldi(instr uint16) {
 	slog.Debug("processing LDI instruction")
 	r0 := (instr >> 9) & 0x7
 	offset := signExtend(instr&0x1FF, 9)
-	vm.Registers[r0] = memRead(vm.Memory, memRead(vm.Memory, vm.Registers[PC]+offset))
+	vm.Registers[r0] = vm.memRead(vm.memRead(vm.Registers[PC] + offset))
 	updateConditionFlags(vm.Registers, r0)
 }
 
@@ -97,7 +97,7 @@ func (vm *VM) ldr(instr uint16) {
 	r0 := (instr >> 9) & 0x7
 	r1 := (instr >> 6) & 0x7
 	offset := signExtend(instr&0x3F, 6)
-	vm.Registers[r0] = memRead(vm.Memory, vm.Registers[r1]+offset)
+	vm.Registers[r0] = vm.memRead(vm.Registers[r1] + offset)
 	updateConditionFlags(vm.Registers, r0)
 }
 
@@ -113,14 +113,14 @@ func (vm *VM) st(instr uint16) {
 	slog.Debug("processing ST instruction")
 	r0 := (instr >> 9) & 0x7
 	offset := signExtend(instr&0x1FF, 9)
-	memWrite(vm.Memory, vm.Registers[PC]+offset, vm.Registers[r0])
+	vm.memWrite(vm.Registers[PC]+offset, vm.Registers[r0])
 }
 
 func (vm *VM) sti(instr uint16) {
 	slog.Debug("processing STI instruction")
 	r0 := (instr >> 9) & 0x7
 	offset := signExtend(instr&0x1FF, 9)
-	memWrite(vm.Memory, memRead(vm.Memory, vm.Registers[PC]+offset), vm.Registers[r0])
+	vm.memWrite(vm.memRead(vm.Registers[PC]+offset), vm.Registers[r0])
 }
 
 func (vm *VM) str(instr uint16) {
@@ -128,7 +128,7 @@ func (vm *VM) str(instr uint16) {
 	r0 := (instr >> 9) & 0x7
 	r1 := (instr >> 6) & 0x7
 	offset := signExtend(instr&0x3F, 6)
-	memWrite(vm.Memory, vm.Registers[r1]+offset, vm.Registers[r0])
+	vm.memWrite(vm.Registers[r1]+offset, vm.Registers[r0])
 }
 
 func (vm *VM) trap(instr uint16) {
@@ -152,9 +152,7 @@ func (vm *VM) trap(instr uint16) {
 
 func (vm *VM) trapGetC() {
 	slog.Debug("processing Trap GETC instruction")
-	inputChar := make([]byte, 1)
-	_, _ = os.Stdin.Read(inputChar[:])
-	vm.Registers[R0] = uint16(inputChar[0])
+	vm.Registers[R0] = uint16(vm.readByte())
 	updateConditionFlags(vm.Registers, uint16(R0))
 }
 
@@ -166,8 +164,8 @@ func (vm *VM) trapOut() {
 func (vm *VM) trapPutS() {
 	slog.Debug("processing Trap PUTS instruction")
 	addr := vm.Registers[R0]
-	for memRead(vm.Memory, addr) != 0 {
-		os.Stdout.Write([]byte{byte(memRead(vm.Memory, addr))})
+	for vm.memRead(addr) != 0 {
+		os.Stdout.Write([]byte{byte(vm.memRead(addr))})
 		addr++
 	}
 }
@@ -175,18 +173,17 @@ func (vm *VM) trapPutS() {
 func (vm *VM) trapIn() {
 	slog.Debug("processing Trap IN instruction")
 	fmt.Printf("Enter a character: ")
-	inputChar := make([]byte, 1)
-	_, _ = os.Stdin.Read(inputChar[:])
-	os.Stdout.Write(inputChar)
-	vm.Registers[R0] = uint16(inputChar[0])
+	inputChar := vm.readByte()
+	os.Stdout.Write([]byte{inputChar})
+	vm.Registers[R0] = uint16(inputChar)
 	updateConditionFlags(vm.Registers, uint16(R0))
 }
 
 func (vm *VM) trapPutSP() {
 	slog.Debug("processing Trap PUTSP instruction")
 	addr := vm.Registers[R0]
-	for memRead(vm.Memory, addr) != 0x0000 {
-		memoryContents := memRead(vm.Memory, addr)
+	for vm.memRead(addr) != 0x0000 {
+		memoryContents := vm.memRead(addr)
 		os.Stdout.Write([]byte{byte(memoryContents)})
 		if memoryContents>>8 != 0x00 {
 			os.Stdout.Write([]byte{byte(memoryContents >> 8)})
