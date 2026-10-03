@@ -65,7 +65,7 @@ func convertHexToLC3Instruction(instruction uint16) string {
 	case 0:
 		a.WriteString("BR ")
 		a.WriteString(fmt.Sprintf("%0.3b ", (instruction>>9)&0xFFF))
-		a.WriteString(fmt.Sprintf("%#x", instruction&0x1FF))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 1:
 		a.WriteString("ADD ")
 		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
@@ -74,49 +74,69 @@ func convertHexToLC3Instruction(instruction uint16) string {
 		case 0:
 			a.WriteString(fmt.Sprintf("R%d", instruction&0x7))
 		case 1:
-			a.WriteString(fmt.Sprintf("%#x", instruction&0x1F))
+			a.WriteString(fmt.Sprintf("%#02x", instruction&0x1F))
 		}
 	case 2:
 		a.WriteString("LD ")
 		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
-		a.WriteString(fmt.Sprintf("%#04x", instruction&0x1FF))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 3:
-		a.WriteString("ST")
+		a.WriteString("ST ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 4:
-		a.WriteString("JSR ")
 		switch (instruction >> 11) & 0x1 {
 		case 0:
+			a.WriteString("JSRR ")
 			a.WriteString(fmt.Sprintf("R%d", (instruction>>6)&0x7))
 		case 1:
-			a.WriteString(fmt.Sprintf("%#04x", instruction&0x7FF))
+			a.WriteString("JSR ")
+			a.WriteString(fmt.Sprintf("%#03x", instruction&0x7FF))
 		}
 	case 5:
-		a.WriteString("AND")
+		a.WriteString("AND ")
 		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
 		a.WriteString(fmt.Sprintf("R%d ", (instruction>>6)&0x7))
 		switch (instruction >> 5) & 0x1 {
 		case 0:
 			a.WriteString(fmt.Sprintf("R%d", instruction&0x7))
 		case 1:
-			a.WriteString(fmt.Sprintf("%#04x", instruction&0x1F))
+			a.WriteString(fmt.Sprintf("%#02x", instruction&0x1F))
 		}
 	case 6:
-		a.WriteString("LDR")
+		a.WriteString("LDR ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>6)&0x7))
+		a.WriteString(fmt.Sprintf("%#02x", instruction&0x3F))
 	case 7:
-		a.WriteString("STR")
+		a.WriteString("STR ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>6)&0x7))
+		a.WriteString(fmt.Sprintf("%#02x", instruction&0x3F))
 	case 8:
 		a.WriteString("RTI")
 	case 9:
-		a.WriteString("NOT")
+		a.WriteString("NOT ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("R%d", (instruction>>6)&0x7))
 	case 10:
-		a.WriteString("LDI")
+		a.WriteString("LDI ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 11:
-		a.WriteString("STI")
+		a.WriteString("STI ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 12:
 		a.WriteString("JMP ")
 		a.WriteString(fmt.Sprintf("R%d", (instruction>>6)&0x7))
+	case 13:
+		a.WriteString(".FILL ")
+		a.WriteString(fmt.Sprintf("%#04x", instruction))
 	case 14:
-		a.WriteString("LEA")
+		a.WriteString("LEA ")
+		a.WriteString(fmt.Sprintf("R%d ", (instruction>>9)&0x7))
+		a.WriteString(fmt.Sprintf("%#03x", instruction&0x1FF))
 	case 15:
 		a.WriteString("TRAP ")
 		trapVector := instruction & 0xFF
@@ -133,6 +153,8 @@ func convertHexToLC3Instruction(instruction uint16) string {
 			a.WriteString("PUTSP")
 		case 0x25:
 			a.WriteString("HALT")
+		default:
+			a.WriteString(fmt.Sprintf("%#02x", trapVector))
 		}
 	default:
 	}
